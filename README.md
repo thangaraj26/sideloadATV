@@ -7,7 +7,29 @@
 Sign in with an Apple ID, pair with an Apple TV on your network, pick an `.ipa`,
 and it's re-signed with your account and installed wirelessly.
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/R2N422RK87)
+
 </div>
+
+---
+
+## Screenshots
+
+| Discovery | Apple ID login |
+| :---: | :---: |
+| <img src="docs/screenshots/03-discovery.png" width="240" alt="Apple TV discovery"> | <img src="docs/screenshots/02-login.png" width="240" alt="Apple ID login"> |
+| **Pairing & connection** | **Installed apps & expiry** |
+| <img src="docs/screenshots/04-device.png" width="240" alt="Pairing and connection steps"> | <img src="docs/screenshots/05-connected.png" width="240" alt="Installed apps with expiry tracking"> |
+
+---
+
+## Download
+
+Grab the latest prebuilt APK from the [**Releases**](../../releases/latest) page
+(arm64 devices, API 35+). Prefer to build from source? See [Building](#building).
+
+If this saves you time, you can support development on Ko-fi 💙
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/R2N422RK87)
 
 ---
 
@@ -57,16 +79,6 @@ exactly what was changed and why. Notably:
 - **Android cross-compilation** — swapped `native-tls`/OpenSSL for `rustls`, replaced a deleted `srp` git fork with the upstream RustCrypto crate, and inlined workspace fields.
 - **Large-transfer reliability** — vendored `jktcp` to raise the retransmit give-up threshold, so 100 MB+ IPAs survive multi-second Apple TV stalls mid-upload; the negotiated tunnel MTU is now applied to the TCP MSS.
 
-## Get the app
-
-Prebuilt, ready-to-install APKs are available as a **paid download** (they save you
-the Rust/NDK build toolchain and cross-compilation below):
-
-> **Download / support:** [ko-fi.com/R2N422RK87](https://ko-fi.com/R2N422RK87)
-
-Buying a build supports development and gets you signed release APKs. The source
-remains available under the noncommercial license below if you'd rather build it
-yourself for personal use.
 
 ## Building
 
