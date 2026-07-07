@@ -62,7 +62,7 @@ exactly what was changed and why. Notably:
 Prebuilt, ready-to-install APKs are available as a **paid download** (they save you
 the Rust/NDK build toolchain and cross-compilation below):
 
-> **Download:** _<add your itch.io / Ko-fi / store link here>_
+> **Download / support:** [ko-fi.com/R2N422RK87](https://ko-fi.com/R2N422RK87)
 
 Buying a build supports development and gets you signed release APKs. The source
 remains available under the noncommercial license below if you'd rather build it
@@ -149,7 +149,7 @@ noncommercial use is free under the [PolyForm Noncommercial 1.0.0](LICENSE) lice
 using it inside a for-profit company's business — requires a separate commercial
 license.
 
-To buy a commercial license, contact: _<add your contact email here>_
+To buy a commercial license, contact: **thangarajgeek@gmail.com**
 
 ## License
 
