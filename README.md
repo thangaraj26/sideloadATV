@@ -57,6 +57,17 @@ exactly what was changed and why. Notably:
 - **Android cross-compilation** — swapped `native-tls`/OpenSSL for `rustls`, replaced a deleted `srp` git fork with the upstream RustCrypto crate, and inlined workspace fields.
 - **Large-transfer reliability** — vendored `jktcp` to raise the retransmit give-up threshold, so 100 MB+ IPAs survive multi-second Apple TV stalls mid-upload; the negotiated tunnel MTU is now applied to the TCP MSS.
 
+## Get the app
+
+Prebuilt, ready-to-install APKs are available as a **paid download** (they save you
+the Rust/NDK build toolchain and cross-compilation below):
+
+> **Download:** _<add your itch.io / Ko-fi / store link here>_
+
+Buying a build supports development and gets you signed release APKs. The source
+remains available under the noncommercial license below if you'd rather build it
+yourself for personal use.
+
 ## Building
 
 **Prerequisites**
@@ -130,12 +141,27 @@ This project stands on the shoulders of the Rust sideloading community. Vendored
 Inspired by the broader sideloading ecosystem: **AltStore/SideStore**, **PlumeImpactor**,
 and **Impactor**. Huge thanks to everyone whose reverse-engineering made this possible.
 
+## Commercial licensing
+
+The source is **dual-licensed**. Personal, hobby, research, educational, and other
+noncommercial use is free under the [PolyForm Noncommercial 1.0.0](LICENSE) license.
+**Any commercial use** — selling it, bundling it into a paid product or service, or
+using it inside a for-profit company's business — requires a separate commercial
+license.
+
+To buy a commercial license, contact: _<add your contact email here>_
+
 ## License
 
-The application code in this repository is licensed under the [MIT License](LICENSE).
-Vendored dependencies under `rust/vendor/` retain their **original licenses** (see the
-`LICENSE` files there and the table above) — the MIT license covers only the first-party
-code, not the vendored crates.
+The first-party application code in this repository is licensed under
+[PolyForm Noncommercial License 1.0.0](LICENSE) (free for noncommercial use;
+commercial use requires a separate license — see above).
+
+Vendored dependencies under `rust/vendor/` retain their **original, unaffected
+licenses** (see the `LICENSE` files there and the Credits table above): MPL-2.0
+(`plume_core`), MIT (`plume_utils`, `jktcp`), and Apache-2.0 (`apple-codesign`).
+The noncommercial restriction applies **only to the first-party code**, not to these
+crates, which remain usable on their own terms.
 
 [UniFFI]: https://github.com/mozilla/uniffi-rs
 [`cargo-ndk`]: https://github.com/bbqsrc/cargo-ndk
