@@ -1,0 +1,49 @@
+[package]
+name = "sideloadatv-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sideloadatv_ffi"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+uniffi = { version = "0.28", features = ["cli", "tokio"] }
+tokio = { version = "1.43", features = ["sync", "net", "fs"] }
+thiserror = "2.0"
+async-trait = "0.1"
+uuid = { version = "1.18", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Portable Apple auth / developer-API / signing core, vendored locally --
+# see rust/vendor/plume_core/Cargo.toml for why (upstream doesn't build
+# standalone: workspace-inherited fields, a 404'd git dependency, and a
+# native-tls feature that doesn't cross-compile to Android).
+plume_core = { path = "../vendor/plume_core" }
+
+# IPA-signing orchestration (bundle walk, entitlement merge, codesign, re-zip) --
+# see rust/vendor/plume_utils/Cargo.toml for provenance/vendoring notes.
+plume_utils = { path = "../vendor/plume_utils" }
+
+# Upstream idevice (not PlumeImpactor's fork) -- PlumeImpactor pins an older
+# idevice fork built for USB/lockdown pairing (their traditional iPhone/iPad
+# target). We target Apple TV over WiFi, which needs the modern RemoteXPC
+# `remote_pairing` module that only exists upstream. usbmuxd is left disabled
+# since it's USB-only and irrelevant to our transport.
+idevice = { git = "https://github.com/jkcoxson/idevice", tag = "v0.1.64", features = [
+    "remote_pairing",
+    "installation_proxy",
+    "heartbeat",
+    "rsd",
+    "tunnel_tcp_stack",
+    "tcp",
+    "afc",
+    "house_arrest",
+    # AppServiceClient (list/launch apps over the post-pairing TLS-PSK tunnel).
+    "core_device",
+] }

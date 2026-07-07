@@ -1,0 +1,70 @@
+# Vendored from https://github.com/BoardTM/PlumeImpactor (crates/core) at
+# commit c6590f3c8c7cc9c5d66a08ef25327801220d2681. Modifications from upstream,
+# both required because upstream's dependency graph doesn't build outside their
+# own workspace / doesn't cross-compile to Android:
+#   - inlined `*.workspace = true` fields (this is no longer a workspace member)
+#   - `srp` git fork (PlumeImpactor/plume-PAKEs) is 404 upstream (deleted/private);
+#     replaced with the official RustCrypto crates.io release. plume_core only
+#     uses the fork's public API (SrpClient/SrpClientVerifier/G_2048), which is
+#     unchanged in the stock crate.
+#   - `reqwest` switched from `default-tls` (native-tls -> system OpenSSL, not
+#     available via the Android NDK) to `rustls-tls`, matching the `rustls`
+#     dependency already present in this same Cargo.toml.
+#   - dropped `[package.metadata.patch]`: it referenced the `cargo-patch` tool
+#     but no `build.rs`/patch files invoking it exist anywhere in the source
+#     repo, so it was already inert.
+[package]
+name = "plume_core"
+description = "Core library for Impactor tools."
+edition = "2024"
+version = "1.4.0"
+authors = ["khcrysalis <s03781614@icloud.com>"]
+license = "MPL-2.0"
+repository = "https://github.com/BoardTM/PlumeImpactor"
+
+[dependencies]
+tokio = { version = "1.43", features = ["full"] }
+plist = "1.8.0"
+uuid = "1.18.1"
+thiserror = "2.0.16"
+log = "0.4.28"
+ctor = "0.4"
+# Core dependencies
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+rustls = { version = "0.23.32", features = ["ring"] }
+reqwest = { version = "0.11.14", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+regex = "1.11.2"
+base64 = "0.22"
+hex = "0.4.3"
+rand = "0.8.5"
+# Cryptography
+aes = "0.8.2"
+aes-gcm = "0.10.1"
+cbc = { version = "0.1.2", features = ["std"] }
+hmac = "0.12.1"
+pbkdf2 = "0.11"
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+rsa = "0.9.8"
+# Same version the `srp` crate itself depends on -- needed directly so we can
+# call its lower-level SRP primitives (see login.rs) with matching BigUint types.
+num-bigint = "0.4"
+# Certificates
+x509-certificate = "0.24.0"
+pem = "3.0.5"
+pem-rfc7468 = "0.7.0"
+rcgen = "0.9.3"
+p12-keystore = "0.2.0" # TODO: look into p12 crate and why it doesnt support SHA256
+# Apple
+goblin = "0.9.3"
+# Forks
+apple-codesign = { git = "https://github.com/PlumeImpactor/plume-apple-platform-rs", rev = "428b42f", package = "apple-codesign", default-features =  false }
+omnisette = { git = "https://github.com/PlumeImpactor/omnisette", rev = "c066ac2", package = "omnisette", features = ["remote-anisette-v3"] }
+srp = "0.6"
+
+[features]
+default = []
+# TODO: add features lmao
+tweaks = []
+store = []

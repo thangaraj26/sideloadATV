@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["ffi", "vendor/plume_core", "vendor/plume_utils", "vendor/jktcp"]
+
+# idevice pulls jktcp (its userspace TCP tunnel stack) from crates.io. We
+# vendor it to raise the retransmit give-up threshold so large-IPA transfers
+# survive transient multi-second Apple TV stalls instead of being killed after
+# ~6s. See vendor/jktcp/src/adapter.rs (MAX_RETRIES).
+[patch.crates-io]
+jktcp = { path = "vendor/jktcp" }
+
+[profile.release]
+lto = true
+# NOT stripped: uniffi-bindgen's "library mode" needs the exported metadata
+# symbols to still be present in the .so to generate Kotlin bindings from it.
+# Strip in a separate packaging step once bindings are generated, if desired.
+strip = false

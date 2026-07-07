@@ -1,0 +1,490 @@
+package com.darkshadow.sideloadatv.pairing
+
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.darkshadow.sideloadatv.auth.AppleIdentity
+import com.darkshadow.sideloadatv.discovery.DiscoveredDevice
+import com.darkshadow.sideloadatv.ui.ChipTone
+import com.darkshadow.sideloadatv.ui.SectionHeader
+import com.darkshadow.sideloadatv.ui.StatusChip
+import java.io.File
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import uniffi.sideloadatv_ffi.InstallProgressListener
+import uniffi.sideloadatv_ffi.InstalledApp
+import uniffi.sideloadatv_ffi.PairingResult
+import uniffi.sideloadatv_ffi.PairingSession
+import uniffi.sideloadatv_ffi.PinPrompter
+import uniffi.sideloadatv_ffi.StoredAppInfo
+import uniffi.sideloadatv_ffi.TunnelSession
+import uniffi.sideloadatv_ffi.listStoredApps
+import uniffi.sideloadatv_ffi.refreshStoredApp
+
+private const val SENDING_HOST = "sideloadATV"
+
+private fun pairingFileFor(context: Context, device: DiscoveredDevice): File {
+    val safeName = device.serviceName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+    return File(context.filesDir, "pairing_$safeName.plist")
+}
+
+private fun displayNameFor(context: Context, uri: Uri): String? {
+    return context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+    }
+}
+
+/// An installed app enriched with our local record of when its provisioning
+/// profile expires, if we're the one that signed it. `remainingDays` is null
+/// for apps we have no local record of (installed some other way, or the
+/// record was lost) -- there's no on-device API for provisioning profile
+/// expiry, so those just show as "unknown".
+private data class AppRow(
+    val installed: InstalledApp,
+    val stored: StoredAppInfo?,
+) {
+    val remainingDays: Long?
+        get() = stored?.let {
+            TimeUnit.SECONDS.toDays(it.expiresAt - System.currentTimeMillis() / 1000)
+        }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DeviceDetailScreen(
+    device: DiscoveredDevice,
+    identity: AppleIdentity?,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pairingFile = remember(device.serviceName) { pairingFileFor(context, device) }
+
+    var status by remember(device.serviceName) { mutableStateOf<String?>(null) }
+    var isBusy by remember(device.serviceName) { mutableStateOf(false) }
+    var pinRequest by remember(device.serviceName) { mutableStateOf<CompletableDeferred<String>?>(null) }
+    var pinInput by remember(device.serviceName) { mutableStateOf("") }
+    var hasPairing by remember(device.serviceName) { mutableStateOf(pairingFile.exists()) }
+    var tunnelSession by remember(device.serviceName) { mutableStateOf<TunnelSession?>(null) }
+    var appRows by remember(device.serviceName) { mutableStateOf<List<AppRow>?>(null) }
+    var installProgress by remember(device.serviceName) { mutableStateOf<Int?>(null) }
+
+    val canPair = !isBusy && device.manualPairing.isUsable
+    val canTunnel = !isBusy && device.verified.isUsable
+
+    suspend fun refreshAppRows(session: TunnelSession) {
+        val installed = runCatching { session.listInstalledApps() }.getOrElse {
+            status = "List apps failed: ${it.message}"
+            return
+        }
+        val stored = runCatching { listStoredApps(context.filesDir.absolutePath) }.getOrDefault(emptyList())
+            .associateBy { it.bundleIdentifier }
+        appRows = installed.map { app -> AppRow(app, stored[app.bundleIdentifier]) }
+        status = "${installed.size} apps installed"
+    }
+
+    fun installSignedIpa(session: TunnelSession, signing: suspend () -> ByteArray, fileName: String) {
+        isBusy = true
+        installProgress = 0
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val signedBytes = signing()
+                status = "Uploading & installing $fileName..."
+                val listener = object : InstallProgressListener {
+                    override suspend fun onProgress(percentComplete: UInt) {
+                        installProgress = percentComplete.toInt()
+                    }
+                }
+                session.installIpa(signedBytes, fileName, listener)
+            }.onSuccess {
+                status = "Install complete"
+                refreshAppRows(session)
+            }.onFailure { error ->
+                status = "Install failed: ${error.message}"
+            }
+            installProgress = null
+            isBusy = false
+        }
+    }
+
+    val ipaPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val session = tunnelSession
+        val signInIdentity = identity
+        if (uri == null || session == null || signInIdentity == null) return@rememberLauncherForActivityResult
+        status = "Reading IPA..."
+        installSignedIpa(
+            session,
+            signing = {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("could not open picked file")
+                val name = displayNameFor(context, uri) ?: "app.ipa"
+                status = "Requesting Apple Developer session..."
+                val signing = signInIdentity.buildSigningSession(context.filesDir.absolutePath)
+                status = "Looking up Apple Developer team..."
+                // Free accounts only ever have one (their personal) team; paid
+                // accounts with more than one aren't handled yet -- this always
+                // signs with the first team returned.
+                val team = signing.listTeams().firstOrNull()
+                    ?: error("no Apple Developer team available for this Apple ID")
+                status = "Signing $name for ${device.serviceName} (team ${team.name})..."
+                signing.signIpa(
+                    bytes,
+                    team.id,
+                    session.info().deviceUuid,
+                    device.serviceName,
+                    context.filesDir.absolutePath,
+                    context.cacheDir.absolutePath,
+                )
+            },
+            fileName = displayNameFor(context, uri) ?: "app.ipa",
+        )
+    }
+
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(device.serviceName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // --- Step 1: pairing --------------------------------------------
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    StepHeader(
+                        title = "1  ·  Pairing",
+                        chipText = if (hasPairing) "Paired" else "Not paired",
+                        chipTone = if (hasPairing) ChipTone.Success else ChipTone.Neutral,
+                    )
+                    Button(
+                        enabled = canPair,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            val address = device.manualPairing.addresses.first()
+                            val port = device.manualPairing.port
+                            isBusy = true
+                            status = "Connecting..."
+                            scope.launch(Dispatchers.IO) {
+                                val existing = if (pairingFile.exists()) pairingFile.readBytes() else null
+                                val prompter = object : PinPrompter {
+                                    override suspend fun requestPin(): String {
+                                        val deferred = CompletableDeferred<String>()
+                                        pinRequest = deferred
+                                        return deferred.await()
+                                    }
+                                }
+                                runCatching {
+                                    PairingSession().pair(
+                                        address.hostAddress ?: address.toString(),
+                                        port.toUShort(),
+                                        SENDING_HOST,
+                                        existing,
+                                        prompter,
+                                    )
+                                }.onSuccess { result: PairingResult ->
+                                    pairingFile.writeBytes(result.pairingFile)
+                                    hasPairing = true
+                                    status = "Paired" + (result.deviceName?.let { " with $it" } ?: " (existing pairing reused)")
+                                }.onFailure { error ->
+                                    status = "Pairing failed: ${error.message}"
+                                }
+                                pinRequest = null
+                                isBusy = false
+                            }
+                        },
+                    ) { Text(if (hasPairing) "Re-pair" else "Pair") }
+                    if (!device.manualPairing.isUsable) {
+                        HintText("Waiting for _remotepairing-manual-pairing._tcp on this device…")
+                    }
+                }
+            }
+
+            // --- Step 2: connection -----------------------------------------
+            if (hasPairing) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        StepHeader(
+                            title = "2  ·  Connection",
+                            chipText = if (tunnelSession != null) "Connected" else "Not connected",
+                            chipTone = if (tunnelSession != null) ChipTone.Success else ChipTone.Neutral,
+                        )
+                        Button(
+                            enabled = canTunnel,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                val address = device.verified.addresses.first()
+                                val port = device.verified.port
+                                isBusy = true
+                                status = "Opening tunnel..."
+                                appRows = null
+                                scope.launch(Dispatchers.IO) {
+                                    runCatching {
+                                        TunnelSession.connect(
+                                            address.hostAddress ?: address.toString(),
+                                            port.toUShort(),
+                                            SENDING_HOST,
+                                            pairingFile.readBytes(),
+                                        )
+                                    }.onSuccess { session ->
+                                        tunnelSession = session
+                                        status = "Tunnel up"
+                                        refreshAppRows(session)
+                                    }.onFailure { error ->
+                                        tunnelSession = null
+                                        status = "Tunnel failed: ${error.message}"
+                                    }
+                                    isBusy = false
+                                }
+                            },
+                        ) { Text(if (tunnelSession != null) "Reconnect" else "Connect") }
+                        tunnelSession?.let { HintText("Device UDID: ${it.info().deviceUuid}") }
+                        if (!device.verified.isUsable) {
+                            HintText("Waiting for _remotepairing._tcp (verified service)…")
+                        }
+                    }
+                }
+            }
+
+            // --- Step 3: installed apps -------------------------------------
+            tunnelSession?.let { session ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SectionHeader("Installed apps")
+                    IconButton(enabled = !isBusy, onClick = { scope.launch(Dispatchers.IO) { refreshAppRows(session) } }) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh list")
+                    }
+                }
+
+                appRows?.forEach { row ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = row.installed.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = row.installed.bundleIdentifier,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            val (label, tone) = expiryChip(row.remainingDays)
+                            StatusChip(text = label, tone = tone)
+                            if (row.stored != null && identity != null) {
+                                FilledTonalButton(
+                                    enabled = !isBusy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = {
+                                        val signInIdentity = identity
+                                        installSignedIpa(
+                                            session,
+                                            signing = {
+                                                val signing = signInIdentity.buildSigningSession(context.filesDir.absolutePath)
+                                                refreshStoredApp(
+                                                    signing,
+                                                    context.filesDir.absolutePath,
+                                                    context.cacheDir.absolutePath,
+                                                    row.stored.bundleIdentifier,
+                                                )
+                                            },
+                                            fileName = row.stored.fileName,
+                                        )
+                                    },
+                                ) {
+                                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Refresh — resets 7-day limit")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    enabled = !isBusy && identity != null,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { ipaPickerLauncher.launch(arrayOf("*/*")) },
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Install new IPA…")
+                }
+                if (identity == null) {
+                    HintText("Log in with your Apple ID (Account) to sign and install apps.")
+                }
+            }
+
+            // --- Progress + status ------------------------------------------
+            installProgress?.let { percent ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LinearProgressIndicator(
+                        progress = { percent / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = "$percent%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            status?.let { StatusBanner(it, busy = isBusy && installProgress == null) }
+        }
+    }
+
+    pinRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Enter PIN") },
+            text = {
+                OutlinedTextField(
+                    value = pinInput,
+                    onValueChange = { pinInput = it },
+                    label = { Text("PIN shown on the Apple TV") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    request.complete(pinInput)
+                    pinInput = ""
+                    pinRequest = null
+                }) { Text("Submit") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    request.completeExceptionally(CancellationException("Pairing cancelled by user"))
+                    pinInput = ""
+                    pinRequest = null
+                }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun StepHeader(title: String, chipText: String, chipTone: ChipTone) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = title, style = MaterialTheme.typography.titleMedium)
+        StatusChip(text = chipText, tone = chipTone)
+    }
+}
+
+@Composable
+private fun HintText(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun StatusBanner(text: String, busy: Boolean) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (busy) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            }
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/// Human label + color tone for a provisioning-profile expiry countdown.
+/// Free Apple IDs get a 7-day profile, so anything at or under 3 days left is
+/// worth flagging (amber) and expired/expiring-today is urgent (red).
+private fun expiryChip(remainingDays: Long?): Pair<String, ChipTone> = when {
+    remainingDays == null -> "Expiry unknown" to ChipTone.Neutral
+    remainingDays < 0 -> "Expired" to ChipTone.Danger
+    remainingDays == 0L -> "Expires today" to ChipTone.Danger
+    remainingDays <= 3 -> "Expires in $remainingDays day${if (remainingDays == 1L) "" else "s"}" to ChipTone.Warning
+    else -> "Expires in $remainingDays days" to ChipTone.Success
+}
