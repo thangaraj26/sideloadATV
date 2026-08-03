@@ -25,8 +25,15 @@ and it's re-signed with your account and installed wirelessly.
 
 ## Download
 
-Grab the latest prebuilt APK from the [**Releases**](../../releases/latest) page
-(arm64 devices, API 35+). Prefer to build from source? See [Building](#building).
+Grab the latest prebuilt APK from the [**Releases**](../../releases/latest) page.
+Prefer to build from source? See [Building](#building).
+
+| APK | Requires |
+|-----|----------|
+| `sideloadATV-v1.0.apk` | Android 15+ (API 35+) |
+| `sideloadATV-v1.0-android14.apk` | Android 14+ (API 34+) |
+
+Both are arm64-v8a, debug-key signed for direct sideloading.
 
 If this saves you time, you can support development on Ko-fi 💙
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/R2N422RK87)
@@ -84,7 +91,7 @@ exactly what was changed and why. Notably:
 
 **Prerequisites**
 
-- Android Studio (compileSdk 36) and an Android device on **API 35+** (`minSdk = 35`).
+- Android Studio (compileSdk 36) and an Android device on **API 34+** (`minSdk = 34`).
 - A Rust toolchain with the Android target and [`cargo-ndk`]:
   ```sh
   rustup target add aarch64-linux-android
