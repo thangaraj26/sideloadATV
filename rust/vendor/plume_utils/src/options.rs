@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use plume_core::developer::qh::devices::DeviceType;
 
 /// Settings for the signer process.
 #[derive(Clone, Debug)]
@@ -28,6 +29,10 @@ pub struct SignerOptions {
     pub app: SignerApp,
     /// Apply autorefresh
     pub refresh: bool,
+    /// Override the device type used when requesting provisioning profiles.
+    /// When set this takes precedence over the platform name read from the
+    /// bundle's Info.plist, which may be absent or wrong for cross-platform IPAs.
+    pub device_type: Option<DeviceType>,
 }
 
 impl Default for SignerOptions {
@@ -46,6 +51,7 @@ impl Default for SignerOptions {
             shallow: false,
             app: SignerApp::Default,
             refresh: false,
+            device_type: None,
         }
     }
 }

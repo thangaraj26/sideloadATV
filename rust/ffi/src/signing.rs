@@ -180,7 +180,16 @@ impl SigningSession {
 
         let mut signer = Signer::new(
             Some(cert),
-            SignerOptions { mode: SignerMode::Pem, ..Default::default() },
+            SignerOptions {
+                mode: SignerMode::Pem,
+                // Always request a tvOS provisioning profile. Without this,
+                // register_bundle reads DTPlatformName from the IPA — but iOS
+                // IPAs (or those with no DTPlatformName) would request an iOS
+                // profile. Apple returns error 8220 because the only registered
+                // device is the Apple TV (tvOS), not an iPhone/iPad.
+                device_type: Some(DeviceType::Tvos),
+                ..Default::default()
+            },
         );
 
         let team_id_opt = Some(team_id.clone());

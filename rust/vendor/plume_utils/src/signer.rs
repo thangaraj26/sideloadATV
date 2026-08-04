@@ -277,9 +277,14 @@ impl Signer {
             return Ok(());
         }
 
-        let device_type = bundle
-            .get_platform_name()
-            .map(|p| DeviceType::from_string(&p));
+        // Use the caller-supplied device type override if set; otherwise derive
+        // it from the bundle's DTPlatformName. The override is important for
+        // Apple TV: iOS IPAs may be missing DTPlatformName or report "iphoneos",
+        // which would request an iOS profile -- failing because no iOS devices
+        // are registered. Forcing Tvos always works for an ATV sideloader.
+        let device_type = self.options.device_type.or_else(|| {
+            bundle.get_platform_name().map(|p| DeviceType::from_string(&p))
+        });
         let bundles = bundle
             .collect_bundles_sorted()?
             .into_iter()
