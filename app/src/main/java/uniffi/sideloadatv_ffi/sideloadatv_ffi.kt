@@ -821,6 +821,8 @@ internal open class UniffiVTableCallbackInterfacePinPrompter(
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -895,6 +897,8 @@ internal interface UniffiLib : Library {
     fun uniffi_sideloadatv_ffi_fn_constructor_signingsession_create(`grandslam`: Pointer,
     ): Long
     fun uniffi_sideloadatv_ffi_fn_constructor_signingsession_from_stored(`dataDir`: RustBuffer.ByValue,`adsid`: RustBuffer.ByValue,`xcodeGsToken`: RustBuffer.ByValue,
+    ): Long
+    fun uniffi_sideloadatv_ffi_fn_method_signingsession_delete_registered_app_id(`ptr`: Pointer,`teamId`: RustBuffer.ByValue,`appIdId`: RustBuffer.ByValue,
     ): Long
     fun uniffi_sideloadatv_ffi_fn_method_signingsession_list_teams(`ptr`: Pointer,
     ): Long
@@ -1062,6 +1066,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_sideloadatv_ffi_checksum_method_pinprompter_request_pin(
     ): Short
+    fun uniffi_sideloadatv_ffi_checksum_method_signingsession_delete_registered_app_id(
+    ): Short
     fun uniffi_sideloadatv_ffi_checksum_method_signingsession_list_teams(
     ): Short
     fun uniffi_sideloadatv_ffi_checksum_method_signingsession_sign_ipa(
@@ -1142,6 +1148,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_sideloadatv_ffi_checksum_method_pinprompter_request_pin() != 4755.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_sideloadatv_ffi_checksum_method_signingsession_delete_registered_app_id() != 19264.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_sideloadatv_ffi_checksum_method_signingsession_list_teams() != 10912.toShort()) {
@@ -3059,6 +3068,13 @@ public object FfiConverterTypePinPrompter: FfiConverter<PinPrompter, Pointer> {
 public interface SigningSessionInterface {
     
     /**
+     * Removes one registered App ID slot from the Apple Developer portal.
+     * Use this after receiving `SigningError::AppIdLimitReached` to free a slot,
+     * then call `sign_ipa` again.
+     */
+    suspend fun `deleteRegisteredAppId`(`teamId`: kotlin.String, `appIdId`: kotlin.String)
+    
+    /**
      * Teams this Apple ID can sign under. Only prompt the user to pick one if
      * this returns more than one entry.
      */
@@ -3166,6 +3182,33 @@ open class SigningSession: Disposable, AutoCloseable, SigningSessionInterface {
         return uniffiRustCall() { status ->
             UniffiLib.INSTANCE.uniffi_sideloadatv_ffi_fn_clone_signingsession(pointer!!, status)
         }
+    }
+
+    
+    /**
+     * Removes one registered App ID slot from the Apple Developer portal.
+     * Use this after receiving `SigningError::AppIdLimitReached` to free a slot,
+     * then call `sign_ipa` again.
+     */
+    @Throws(SigningException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteRegisteredAppId`(`teamId`: kotlin.String, `appIdId`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_sideloadatv_ffi_fn_method_signingsession_delete_registered_app_id(
+                thisPtr,
+                FfiConverterString.lower(`teamId`),FfiConverterString.lower(`appIdId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+        
+        // Error FFI converter
+        SigningException.ErrorHandler,
+    )
     }
 
     
@@ -3644,6 +3687,48 @@ public object FfiConverterTypeTunnelSession: FfiConverter<TunnelSession, Pointer
         // The Rust code always expects pointers written as 8 bytes,
         // and will fail to compile if they don't fit.
         buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+
+/**
+ * Metadata for one registered App ID slot on the Apple Developer portal.
+ */
+data class AppIdInfo (
+    /**
+     * Opaque portal identifier, e.g. "A1B2C3D4E5" – pass back to `delete_registered_app_id`.
+     */
+    var `id`: kotlin.String, 
+    var `name`: kotlin.String, 
+    var `identifier`: kotlin.String
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAppIdInfo: FfiConverterRustBuffer<AppIdInfo> {
+    override fun read(buf: ByteBuffer): AppIdInfo {
+        return AppIdInfo(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AppIdInfo) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`identifier`)
+    )
+
+    override fun write(value: AppIdInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`identifier`, buf)
     }
 }
 
@@ -4214,6 +4299,20 @@ sealed class SigningException: kotlin.Exception() {
             get() = "v1=${ v1 }"
     }
     
+    /**
+     * Returned when a free Apple ID already has 3 App IDs registered and the
+     * IPA being installed requires a new slot. The caller should ask the user
+     * to remove one of the `existing_app_ids`, call `delete_registered_app_id`,
+     * then retry `sign_ipa`.
+     */
+    class AppIdLimitReached(
+        
+        val `existingAppIds`: List<AppIdInfo>
+        ) : SigningException() {
+        override val message
+            get() = "existingAppIds=${ `existingAppIds` }"
+    }
+    
 
     companion object ErrorHandler : UniffiRustCallStatusErrorHandler<SigningException> {
         override fun lift(error_buf: RustBuffer.ByValue): SigningException = FfiConverterTypeSigningError.lift(error_buf)
@@ -4233,6 +4332,9 @@ public object FfiConverterTypeSigningError : FfiConverterRustBuffer<SigningExcep
             1 -> SigningException.Message(
                 FfiConverterString.read(buf),
                 )
+            2 -> SigningException.AppIdLimitReached(
+                FfiConverterSequenceTypeAppIdInfo.read(buf),
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -4244,6 +4346,11 @@ public object FfiConverterTypeSigningError : FfiConverterRustBuffer<SigningExcep
                 4UL
                 + FfiConverterString.allocationSize(value.v1)
             )
+            is SigningException.AppIdLimitReached -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterSequenceTypeAppIdInfo.allocationSize(value.`existingAppIds`)
+            )
         }
     }
 
@@ -4252,6 +4359,11 @@ public object FfiConverterTypeSigningError : FfiConverterRustBuffer<SigningExcep
             is SigningException.Message -> {
                 buf.putInt(1)
                 FfiConverterString.write(value.v1, buf)
+                Unit
+            }
+            is SigningException.AppIdLimitReached -> {
+                buf.putInt(2)
+                FfiConverterSequenceTypeAppIdInfo.write(value.`existingAppIds`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -4347,6 +4459,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeAppIdInfo: FfiConverterRustBuffer<List<AppIdInfo>> {
+    override fun read(buf: ByteBuffer): List<AppIdInfo> {
+        val len = buf.getInt()
+        return List<AppIdInfo>(len) {
+            FfiConverterTypeAppIdInfo.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<AppIdInfo>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeAppIdInfo.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<AppIdInfo>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeAppIdInfo.write(it, buf)
         }
     }
 }

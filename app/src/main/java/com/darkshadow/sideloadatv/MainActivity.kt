@@ -68,9 +68,9 @@ private fun AppNavHost(discovery: MdnsDiscovery, modifier: Modifier = Modifier) 
     // renders immediately without a loading gate. Token validity is not checked
     // here -- an expired token surfaces as an error at sign time, at which point
     // the user can re-login from the Account screen.
-    var identity by remember {
+    var identity: AppleIdentity? by remember {
         val stored = loadStoredAccount(context)
-        mutableStateOf(stored?.let { AppleIdentity.Restored(it) })
+        mutableStateOf<AppleIdentity?>(stored?.let { AppleIdentity.Restored(it) })
     }
 
     NavHost(navController = navController, startDestination = "devices", modifier = modifier) {
