@@ -7,11 +7,21 @@ use super::{DeveloperSession, QHResponseMeta};
 use crate::developer_endpoint;
 
 impl DeveloperSession {
-    pub async fn qh_list_devices(&self, team_id: &String) -> Result<DevicesResponse, Error> {
+    pub async fn qh_list_devices(
+        &self,
+        team_id: &String,
+        platform: Option<DeviceType>,
+    ) -> Result<DevicesResponse, Error> {
         let endpoint = developer_endpoint!("/QH65B2/ios/listDevices.action");
 
         let mut body = Dictionary::new();
         body.insert("teamId".to_string(), Value::String(team_id.clone()));
+        // Without a platform filter Apple returns iOS devices only. Pass the
+        // tvOS filter so the Apple TV UDID appears in the result when expected.
+        if let Some(DeviceType::Tvos) = platform {
+            body.insert("DTDK_Platform".to_string(), Value::String("tvos".to_string()));
+            body.insert("subPlatform".to_string(), Value::String("tvOS".to_string()));
+        }
 
         let response = self.qh_send_request(&endpoint, Some(body)).await?;
         let response_data: DevicesResponse = plist::from_value(&Value::Dictionary(response))?;
@@ -53,8 +63,9 @@ impl DeveloperSession {
         &self,
         team_id: &String,
         device_udid: &String,
+        platform: Option<DeviceType>,
     ) -> Result<Option<Device>, Error> {
-        let response_data = self.qh_list_devices(team_id).await?;
+        let response_data = self.qh_list_devices(team_id, platform).await?;
 
         let device = response_data
             .devices
@@ -71,7 +82,7 @@ impl DeveloperSession {
         device_udid: &String,
         device_type: Option<DeviceType>,
     ) -> Result<Device, Error> {
-        if let Some(device) = self.qh_get_device(team_id, device_udid).await? {
+        if let Some(device) = self.qh_get_device(team_id, device_udid, device_type).await? {
             Ok(device)
         } else {
             let response = self
