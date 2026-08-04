@@ -9,10 +9,25 @@ use plume_utils::{Package, PlistInfoTrait, Signer, SignerMode, SignerOptions};
 use crate::auth::GrandslamSession;
 use crate::store::{self, StoredAppInfo};
 
+/// Metadata for one registered App ID slot on the Apple Developer portal.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct AppIdInfo {
+    /// Opaque portal identifier, e.g. "A1B2C3D4E5" – pass back to `delete_registered_app_id`.
+    pub id: String,
+    pub name: String,
+    pub identifier: String,
+}
+
 #[derive(uniffi::Error, Debug, thiserror::Error)]
 pub enum SigningError {
     #[error("{0}")]
     Message(String),
+    /// Returned when a free Apple ID already has 3 App IDs registered and the
+    /// IPA being installed requires a new slot. The caller should ask the user
+    /// to remove one of the `existing_app_ids`, call `delete_registered_app_id`,
+    /// then retry `sign_ipa`.
+    #[error("Free accounts support 3 apps. Remove one to make room.")]
+    AppIdLimitReached { existing_app_ids: Vec<AppIdInfo> },
 }
 
 impl From<plume_core::Error> for SigningError {
@@ -92,6 +107,18 @@ impl SigningSession {
         Ok(Arc::new(Self { developer }))
     }
 
+    /// Removes one registered App ID slot from the Apple Developer portal.
+    /// Use this after receiving `SigningError::AppIdLimitReached` to free a slot,
+    /// then call `sign_ipa` again.
+    pub async fn delete_registered_app_id(
+        &self,
+        team_id: String,
+        app_id_id: String,
+    ) -> Result<(), SigningError> {
+        self.developer.qh_delete_app_id(&team_id, &app_id_id).await?;
+        Ok(())
+    }
+
     /// Teams this Apple ID can sign under. Only prompt the user to pick one if
     /// this returns more than one entry.
     pub async fn list_teams(&self) -> Result<Vec<TeamInfo>, SigningError> {
@@ -158,6 +185,25 @@ impl SigningSession {
 
         let team_id_opt = Some(team_id.clone());
         signer.modify_bundle(&bundle, &team_id_opt).await?;
+
+        // Detect the free-account 3-App-ID limit before register_bundle fires
+        // qh_add_app_id (which returns an opaque Apple error). After modify_bundle
+        // the identifier may have been suffixed with the team ID, so we read it
+        // from the bundle rather than the raw IPA.
+        let final_bundle_id = bundle.get_bundle_identifier().unwrap_or_default();
+        let existing = self.developer.qh_list_app_ids(&team_id).await?;
+        if !existing.app_ids.iter().any(|a| a.identifier == final_bundle_id)
+            && existing.app_ids.len() >= 3
+        {
+            return Err(SigningError::AppIdLimitReached {
+                existing_app_ids: existing
+                    .app_ids
+                    .into_iter()
+                    .map(|a| AppIdInfo { id: a.app_id_id, name: a.name, identifier: a.identifier })
+                    .collect(),
+            });
+        }
+
         signer.register_bundle(&bundle, &self.developer, &team_id, false).await?;
         signer.sign_bundle(&bundle).await?;
 

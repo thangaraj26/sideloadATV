@@ -9,7 +9,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,7 +32,6 @@ import com.darkshadow.sideloadatv.discovery.MdnsDiscovery
 import com.darkshadow.sideloadatv.pairing.DeviceDetailScreen
 import com.darkshadow.sideloadatv.ui.theme.SideloadATVTheme
 import kotlinx.coroutines.launch
-import uniffi.sideloadatv_ffi.SigningSession
 
 class MainActivity : ComponentActivity() {
     private lateinit var discovery: MdnsDiscovery
@@ -66,30 +64,14 @@ private fun AppNavHost(discovery: MdnsDiscovery, modifier: Modifier = Modifier) 
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
 
-    var identity by remember { mutableStateOf<AppleIdentity?>(null) }
-    var isRestoring by remember { mutableStateOf(true) }
-
-    // Try to resume a previous Apple ID session (adsid + xcode_gs_token only --
-    // no password is stored) before showing any UI, so a returning user isn't
-    // flashed a login form they don't need. SigningSession.fromStored
-    // self-validates by listing developer teams; a failure here just means
-    // the tokens expired, so we fall back to a normal signed-out state.
-    LaunchedEffect(Unit) {
+    // Restore from encrypted storage synchronously in remember so the nav host
+    // renders immediately without a loading gate. Token validity is not checked
+    // here -- an expired token surfaces as an error at sign time, at which point
+    // the user can re-login from the Account screen.
+    var identity by remember {
         val stored = loadStoredAccount(context)
-        if (stored != null) {
-            val stillValid = runCatching {
-                SigningSession.fromStored(context.filesDir.absolutePath, stored.adsid, stored.xcodeGsToken)
-            }.isSuccess
-            if (stillValid) {
-                identity = AppleIdentity.Restored(stored)
-            } else {
-                clearStoredAccount(context)
-            }
-        }
-        isRestoring = false
+        mutableStateOf(stored?.let { AppleIdentity.Restored(it) })
     }
-
-    if (isRestoring) return
 
     NavHost(navController = navController, startDestination = "devices", modifier = modifier) {
         composable("devices") {

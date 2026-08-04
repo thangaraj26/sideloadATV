@@ -31,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -58,11 +59,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import uniffi.sideloadatv_ffi.AppIdInfo
 import uniffi.sideloadatv_ffi.InstallProgressListener
 import uniffi.sideloadatv_ffi.InstalledApp
 import uniffi.sideloadatv_ffi.PairingResult
 import uniffi.sideloadatv_ffi.PairingSession
 import uniffi.sideloadatv_ffi.PinPrompter
+import uniffi.sideloadatv_ffi.SigningException
+import uniffi.sideloadatv_ffi.SigningSession
 import uniffi.sideloadatv_ffi.StoredAppInfo
 import uniffi.sideloadatv_ffi.TunnelSession
 import uniffi.sideloadatv_ffi.listStoredApps
@@ -97,6 +101,14 @@ private data class AppRow(
         }
 }
 
+private data class AppIdSwapState(
+    val signing: SigningSession,
+    val teamId: String,
+    val appIds: List<AppIdInfo>,
+    val ipaBytes: ByteArray,
+    val fileName: String,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceDetailScreen(
@@ -117,6 +129,8 @@ fun DeviceDetailScreen(
     var tunnelSession by remember(device.serviceName) { mutableStateOf<TunnelSession?>(null) }
     var appRows by remember(device.serviceName) { mutableStateOf<List<AppRow>?>(null) }
     var installProgress by remember(device.serviceName) { mutableStateOf<Int?>(null) }
+    var appIdSwap by remember(device.serviceName) { mutableStateOf<AppIdSwapState?>(null) }
+    var appIdSwapSelected by remember(device.serviceName) { mutableStateOf<String?>(null) }
 
     val canPair = !isBusy && device.manualPairing.isUsable
     val canTunnel = !isBusy && device.verified.isUsable
@@ -162,33 +176,60 @@ fun DeviceDetailScreen(
         val session = tunnelSession
         val signInIdentity = identity
         if (uri == null || session == null || signInIdentity == null) return@rememberLauncherForActivityResult
-        status = "Reading IPA..."
-        installSignedIpa(
-            session,
-            signing = {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+
+        isBusy = true
+        installProgress = 0
+        scope.launch(Dispatchers.IO) {
+            var signingSession: SigningSession? = null
+            var teamId: String? = null
+            var ipaBytes: ByteArray? = null
+            var fileName: String? = null
+            try {
+                ipaBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                     ?: error("could not open picked file")
-                val name = displayNameFor(context, uri) ?: "app.ipa"
+                fileName = displayNameFor(context, uri) ?: "app.ipa"
                 status = "Requesting Apple Developer session..."
-                val signing = signInIdentity.buildSigningSession(context.filesDir.absolutePath)
+                signingSession = signInIdentity.buildSigningSession(context.filesDir.absolutePath)
                 status = "Looking up Apple Developer team..."
-                // Free accounts only ever have one (their personal) team; paid
-                // accounts with more than one aren't handled yet -- this always
-                // signs with the first team returned.
-                val team = signing.listTeams().firstOrNull()
+                val team = signingSession.listTeams().firstOrNull()
                     ?: error("no Apple Developer team available for this Apple ID")
-                status = "Signing $name for ${device.serviceName} (team ${team.name})..."
-                signing.signIpa(
-                    bytes,
-                    team.id,
+                teamId = team.id
+                status = "Signing $fileName for ${device.serviceName} (team ${team.name})..."
+                val signedBytes = signingSession.signIpa(
+                    ipaBytes,
+                    teamId,
                     session.info().deviceUuid,
                     device.serviceName,
                     context.filesDir.absolutePath,
                     context.cacheDir.absolutePath,
                 )
-            },
-            fileName = displayNameFor(context, uri) ?: "app.ipa",
-        )
+                status = "Uploading & installing $fileName..."
+                val listener = object : InstallProgressListener {
+                    override suspend fun onProgress(percentComplete: UInt) {
+                        installProgress = percentComplete.toInt()
+                    }
+                }
+                session.installIpa(signedBytes, fileName, listener)
+                status = "Install complete"
+                refreshAppRows(session)
+            } catch (e: SigningException.AppIdLimitReached) {
+                val s = signingSession
+                val t = teamId
+                val b = ipaBytes
+                if (s != null && t != null && b != null) {
+                    appIdSwap = AppIdSwapState(s, t, e.existingAppIds, b, fileName ?: "app.ipa")
+                    appIdSwapSelected = e.existingAppIds.firstOrNull()?.id
+                } else {
+                    status = "Install failed: ${e.message}"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                status = "Install failed: ${e.message}"
+            }
+            installProgress = null
+            isBusy = false
+        }
     }
 
     Scaffold(
@@ -400,6 +441,84 @@ fun DeviceDetailScreen(
             }
             status?.let { StatusBanner(it, busy = isBusy && installProgress == null) }
         }
+    }
+
+    appIdSwap?.let { swap ->
+        var selected by remember(swap) { mutableStateOf(appIdSwapSelected ?: swap.appIds.firstOrNull()?.id) }
+        AlertDialog(
+            onDismissRequest = { appIdSwap = null },
+            title = { Text("3-App Limit Reached") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "Free Apple IDs support 3 apps. Remove one slot to install a new app " +
+                            "(the app stays on your Apple TV — only its signing slot is freed):",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    swap.appIds.forEach { appId ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            RadioButton(
+                                selected = selected == appId.id,
+                                onClick = { selected = appId.id },
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(appId.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(appId.identifier, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = selected != null,
+                    onClick = {
+                        val selectedId = selected ?: return@TextButton
+                        val savedSwap = swap
+                        val session = tunnelSession ?: return@TextButton
+                        appIdSwap = null
+                        isBusy = true
+                        installProgress = 0
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                status = "Removing app slot..."
+                                savedSwap.signing.deleteRegisteredAppId(savedSwap.teamId, selectedId)
+                                status = "Signing ${savedSwap.fileName}..."
+                                val signedBytes = savedSwap.signing.signIpa(
+                                    savedSwap.ipaBytes,
+                                    savedSwap.teamId,
+                                    session.info().deviceUuid,
+                                    device.serviceName,
+                                    context.filesDir.absolutePath,
+                                    context.cacheDir.absolutePath,
+                                )
+                                status = "Uploading & installing ${savedSwap.fileName}..."
+                                val listener = object : InstallProgressListener {
+                                    override suspend fun onProgress(percentComplete: UInt) {
+                                        installProgress = percentComplete.toInt()
+                                    }
+                                }
+                                session.installIpa(signedBytes, savedSwap.fileName, listener)
+                                status = "Install complete"
+                                refreshAppRows(session)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                status = "Install failed: ${e.message}"
+                            }
+                            installProgress = null
+                            isBusy = false
+                        }
+                    },
+                ) { Text("Remove & Install") }
+            },
+            dismissButton = {
+                TextButton(onClick = { appIdSwap = null }) { Text("Cancel") }
+            },
+        )
     }
 
     pinRequest?.let { request ->

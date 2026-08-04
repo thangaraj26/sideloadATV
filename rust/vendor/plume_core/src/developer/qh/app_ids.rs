@@ -131,7 +131,7 @@ pub struct AppIDResponse {
 #[serde(rename_all = "camelCase")]
 pub struct AppID {
     pub app_id_id: String,
-    name: String,
+    pub name: String,
     app_id_platform: String,
     prefix: String,
     pub identifier: String,
