@@ -257,7 +257,16 @@ impl SigningSession {
         }
         signer.sign_bundle(&bundle).await?;
 
-        let signed_path = package.get_archive_based_on_path(bundle.bundle_dir())?;
+        let signed_path_in_stage = package.get_archive_based_on_path(bundle.bundle_dir())?;
+
+        // Move the signed IPA out of stage_dir BEFORE remove_package_stage().
+        // resigned.ipa lives inside stage_dir; remove_package_stage() deletes
+        // the whole stage_dir tree, so returning signed_path_in_stage directly
+        // gives the caller a path that no longer exists.
+        let signed_path = PathBuf::from(&cache_dir).join("sideloadatv-signed.ipa");
+        std::fs::rename(&signed_path_in_stage, &signed_path)
+            .or_else(|_| std::fs::copy(&signed_path_in_stage, &signed_path).map(|_| ()))
+            .map_err(|e| SigningError::Message(format!("failed to move signed IPA out of stage: {e}")))?;
 
         // Best-effort: remember this app + its provisioning profile expiry so
         // "refresh" (re-sign without re-picking the file) and the
@@ -268,8 +277,7 @@ impl SigningSession {
         //
         // This MUST run before `remove_package_stage()`: `get_bundle_identifier`
         // and `get_bundle_name` read the extracted bundle's on-disk Info.plist,
-        // and removing the stage deletes it (which previously left every app
-        // showing "Expiry unknown" with no Refresh button).
+        // and removing the stage deletes it.
         if let Some(bundle_identifier) = bundle.get_bundle_identifier() {
             if let Err(e) = self
                 .remember_stored_app(&bundle, &bundle_identifier, &team_id, &device_udid, &device_name, &data_dir, &ipa_path.to_string_lossy())
