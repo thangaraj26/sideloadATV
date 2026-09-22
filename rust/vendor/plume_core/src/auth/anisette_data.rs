@@ -58,7 +58,7 @@ impl AnisetteData {
 
                     temp.replace(
                         temp.split('<').nth(3).unwrap().split('>').nth(0).unwrap(),
-                        "com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)",
+                        "com.apple.AuthKit/1 (com.apple.akd/1.0)",
                     )
                 }
                 None => {

@@ -46,4 +46,7 @@ idevice = { git = "https://github.com/jkcoxson/idevice", tag = "v0.1.64", featur
     "house_arrest",
     # AppServiceClient (list/launch apps over the post-pairing TLS-PSK tunnel).
     "core_device",
+    # JIT enablement: DVT DeviceInfo (process listing) + GDB RSP debug proxy.
+    "device_info",
+    "debug_proxy",
 ] }

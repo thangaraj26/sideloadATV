@@ -2855,7 +2855,6 @@ dependencies = [
 [[package]]
 name = "omnisette"
 version = "0.1.0"
-source = "git+https://github.com/PlumeImpactor/omnisette?rev=c066ac2#c066ac2bba09d01ba74c7d1c518b994298cb871c"
 dependencies = [
  "android-loader",
  "anyhow",
@@ -2871,7 +2870,6 @@ dependencies = [
  "objc-foundation",
  "plist",
  "rand 0.9.4",
- "remove-async-await",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
@@ -3707,16 +3705,6 @@ dependencies = [
  "libc",
  "mach2",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "remove-async-await"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0993102a683d0fb29c6053ad44d7ed7555f69b2fa5fe0fa3bba959a9aa4cd1"
-dependencies = [
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]

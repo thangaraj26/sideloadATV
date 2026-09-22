@@ -43,23 +43,23 @@ pub(crate) fn unix_now() -> i64 {
 pub(crate) async fn save_stored_app(
     data_dir: &str,
     info: &StoredAppInfo,
-    original_ipa_bytes: &[u8],
+    original_ipa_path: &str,
 ) -> Result<(), SigningError> {
     let dir = app_dir(data_dir, &info.bundle_identifier);
     tokio::fs::create_dir_all(&dir).await?;
     tokio::fs::write(dir.join("meta.json"), serde_json::to_vec(info)?).await?;
-    tokio::fs::write(dir.join("original.ipa"), original_ipa_bytes).await?;
+    tokio::fs::copy(original_ipa_path, dir.join("original.ipa")).await?;
     Ok(())
 }
 
-async fn load_stored_app(data_dir: &str, bundle_identifier: &str) -> Result<(StoredAppInfo, Vec<u8>), SigningError> {
+async fn load_stored_app(data_dir: &str, bundle_identifier: &str) -> Result<(StoredAppInfo, String), SigningError> {
     let dir = app_dir(data_dir, bundle_identifier);
     let meta_bytes = tokio::fs::read(dir.join("meta.json"))
         .await
         .map_err(|e| SigningError::Message(format!("no stored app for {bundle_identifier}: {e}")))?;
     let meta: StoredAppInfo = serde_json::from_slice(&meta_bytes)?;
-    let ipa_bytes = tokio::fs::read(dir.join("original.ipa")).await?;
-    Ok((meta, ipa_bytes))
+    let ipa_path = dir.join("original.ipa").to_string_lossy().into_owned();
+    Ok((meta, ipa_path))
 }
 
 /// Apps previously signed+installed through this app, with their last-known
@@ -97,17 +97,18 @@ pub async fn remove_stored_app(data_dir: String, bundle_identifier: String) -> R
 
 /// Re-signs a previously-installed app from its locally-stored original IPA,
 /// requesting a fresh provisioning profile (and so a fresh 7-day expiry)
-/// without the user having to re-pick the file. The result is ready for
-/// `TunnelSession::install_ipa`, same as a fresh `SigningSession::sign_ipa` call.
+/// without the user having to re-pick the file. Returns the path to the signed
+/// IPA (inside `cache_dir`), ready for `TunnelSession::install_ipa`. The
+/// caller is responsible for deleting the returned file after the install.
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn refresh_stored_app(
     signing: std::sync::Arc<SigningSession>,
     data_dir: String,
     cache_dir: String,
     bundle_identifier: String,
-) -> Result<Vec<u8>, SigningError> {
-    let (meta, ipa_bytes) = load_stored_app(&data_dir, &bundle_identifier).await?;
+) -> Result<String, SigningError> {
+    let (meta, ipa_path) = load_stored_app(&data_dir, &bundle_identifier).await?;
     signing
-        .sign_ipa(ipa_bytes, meta.team_id, meta.device_udid, meta.device_name, data_dir, cache_dir)
+        .sign_ipa(ipa_path, meta.team_id, meta.device_udid, meta.device_name, data_dir, cache_dir)
         .await
 }

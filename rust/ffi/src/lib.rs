@@ -15,6 +15,8 @@ pub use install::InstallProgressListener;
 mod signing;
 pub use signing::{SigningError, SigningSession, TeamInfo};
 
+mod jit;
+
 mod store;
 pub use store::{StoredAppInfo, list_stored_apps, refresh_stored_app, remove_stored_app};
 

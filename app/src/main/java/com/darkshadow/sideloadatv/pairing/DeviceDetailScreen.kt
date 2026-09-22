@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -30,6 +31,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -54,6 +57,7 @@ import com.darkshadow.sideloadatv.ui.ChipTone
 import com.darkshadow.sideloadatv.ui.SectionHeader
 import com.darkshadow.sideloadatv.ui.StatusChip
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -105,8 +109,14 @@ private data class AppIdSwapState(
     val signing: SigningSession,
     val teamId: String,
     val appIds: List<AppIdInfo>,
-    val ipaBytes: ByteArray,
+    val ipaPath: String,
     val fileName: String,
+)
+
+private data class ManageAppIdsState(
+    val signing: SigningSession,
+    val teamId: String,
+    val appIds: List<AppIdInfo>,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -131,6 +141,8 @@ fun DeviceDetailScreen(
     var installProgress by remember(device.serviceName) { mutableStateOf<Int?>(null) }
     var appIdSwap by remember(device.serviceName) { mutableStateOf<AppIdSwapState?>(null) }
     var appIdSwapSelected by remember(device.serviceName) { mutableStateOf<String?>(null) }
+    var manageAppIds by remember(device.serviceName) { mutableStateOf<ManageAppIdsState?>(null) }
+    var deletingAppId by remember(device.serviceName) { mutableStateOf<String?>(null) }
 
     val canPair = !isBusy && device.manualPairing.isUsable
     val canTunnel = !isBusy && device.verified.isUsable
@@ -146,19 +158,19 @@ fun DeviceDetailScreen(
         status = "${installed.size} apps installed"
     }
 
-    fun installSignedIpa(session: TunnelSession, signing: suspend () -> ByteArray, fileName: String) {
+    fun installSignedIpa(session: TunnelSession, signing: suspend () -> String, fileName: String) {
         isBusy = true
         installProgress = 0
         scope.launch(Dispatchers.IO) {
             runCatching {
-                val signedBytes = signing()
+                val signedPath = signing()
                 status = "Uploading & installing $fileName..."
                 val listener = object : InstallProgressListener {
                     override suspend fun onProgress(percentComplete: UInt) {
                         installProgress = percentComplete.toInt()
                     }
                 }
-                session.installIpa(signedBytes, fileName, listener)
+                session.installIpa(signedPath, fileName, listener)
             }.onSuccess {
                 status = "Install complete"
                 refreshAppRows(session)
@@ -182,12 +194,18 @@ fun DeviceDetailScreen(
         scope.launch(Dispatchers.IO) {
             var signingSession: SigningSession? = null
             var teamId: String? = null
-            var ipaBytes: ByteArray? = null
+            var tempInputFile: File? = null
             var fileName: String? = null
             try {
-                ipaBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: error("could not open picked file")
+                // Stream the picked file to a temp file — never read the whole
+                // IPA into JVM heap (an 850 MB app would OOM immediately).
                 fileName = displayNameFor(context, uri) ?: "app.ipa"
+                tempInputFile = File(context.cacheDir, "sideloadatv-input-${UUID.randomUUID()}.ipa")
+                status = "Copying $fileName..."
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    tempInputFile.outputStream().use { output -> input.copyTo(output) }
+                } ?: error("could not open picked file")
+
                 status = "Requesting Apple Developer session..."
                 signingSession = signInIdentity.buildSigningSession(context.filesDir.absolutePath)
                 status = "Looking up Apple Developer team..."
@@ -195,8 +213,8 @@ fun DeviceDetailScreen(
                     ?: error("no Apple Developer team available for this Apple ID")
                 teamId = team.id
                 status = "Signing $fileName for ${device.serviceName} (team ${team.name})..."
-                val signedBytes = signingSession.signIpa(
-                    ipaBytes,
+                val signedPath = signingSession.signIpa(
+                    tempInputFile.absolutePath,
                     teamId,
                     session.info().deviceUuid,
                     device.serviceName,
@@ -209,16 +227,18 @@ fun DeviceDetailScreen(
                         installProgress = percentComplete.toInt()
                     }
                 }
-                session.installIpa(signedBytes, fileName, listener)
+                // install_ipa deletes the signed file after upload
+                session.installIpa(signedPath, fileName, listener)
                 status = "Install complete"
                 refreshAppRows(session)
             } catch (e: SigningException.AppIdLimitReached) {
                 val s = signingSession
                 val t = teamId
-                val b = ipaBytes
-                if (s != null && t != null && b != null) {
-                    appIdSwap = AppIdSwapState(s, t, e.existingAppIds, b, fileName ?: "app.ipa")
+                val p = tempInputFile?.absolutePath
+                if (s != null && t != null && p != null) {
+                    appIdSwap = AppIdSwapState(s, t, e.existingAppIds, p, fileName ?: "app.ipa")
                     appIdSwapSelected = e.existingAppIds.firstOrNull()?.id
+                    tempInputFile = null // ownership transferred to AppIdSwapState
                 } else {
                     status = "Install failed: ${e.message}"
                 }
@@ -226,6 +246,8 @@ fun DeviceDetailScreen(
                 throw e
             } catch (e: Exception) {
                 status = "Install failed: ${e.message}"
+            } finally {
+                tempInputFile?.delete()
             }
             installProgress = null
             isBusy = false
@@ -396,7 +418,7 @@ fun DeviceDetailScreen(
                                                     context.filesDir.absolutePath,
                                                     context.cacheDir.absolutePath,
                                                     row.stored.bundleIdentifier,
-                                                )
+                                                ) // returns signed path; install_ipa deletes it
                                             },
                                             fileName = row.stored.fileName,
                                         )
@@ -406,6 +428,25 @@ fun DeviceDetailScreen(
                                     Spacer(Modifier.width(8.dp))
                                     Text("Refresh — resets 7-day limit")
                                 }
+                            }
+                            FilledTonalButton(
+                                enabled = !isBusy,
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    isBusy = true
+                                    val bundleId = row.installed.bundleIdentifier
+                                    scope.launch(Dispatchers.IO) {
+                                        status = "Enabling JIT for ${row.installed.name}…"
+                                        runCatching { session.enableJit(bundleId) }
+                                            .onSuccess { status = "JIT enabled for ${row.installed.name}" }
+                                            .onFailure { status = "Enable JIT failed: ${it.message}" }
+                                        isBusy = false
+                                    }
+                                },
+                            ) {
+                                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Enable JIT")
                             }
                         }
                     }
@@ -420,7 +461,33 @@ fun DeviceDetailScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("Install new IPA…")
                 }
-                if (identity == null) {
+                if (identity != null) {
+                    OutlinedButton(
+                        enabled = !isBusy,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            isBusy = true
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    status = "Loading App IDs…"
+                                    val signing = identity.buildSigningSession(context.filesDir.absolutePath)
+                                    val team = signing.listTeams().firstOrNull()
+                                        ?: error("No developer team found for this Apple ID")
+                                    val appIds = signing.listRegisteredAppIds(team.id)
+                                    manageAppIds = ManageAppIdsState(signing, team.id, appIds)
+                                    status = null
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    status = "Failed to load App IDs: ${e.message}"
+                                }
+                                isBusy = false
+                            }
+                        },
+                    ) {
+                        Text("Manage App IDs…")
+                    }
+                } else {
                     HintText("Log in with your Apple ID (Account) to sign and install apps.")
                 }
             }
@@ -441,6 +508,84 @@ fun DeviceDetailScreen(
             }
             status?.let { StatusBanner(it, busy = isBusy && installProgress == null) }
         }
+    }
+
+    manageAppIds?.let { state ->
+        var currentIds by remember(state) { mutableStateOf(state.appIds) }
+        AlertDialog(
+            onDismissRequest = { if (deletingAppId == null) manageAppIds = null },
+            title = { Text("Registered App IDs") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                    Text(
+                        "Free accounts: up to 10 App IDs per 7 days. Delete slots you no longer need.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    if (currentIds.isEmpty()) {
+                        Text(
+                            "No registered App IDs.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        currentIds.forEachIndexed { index, appId ->
+                            if (index > 0) HorizontalDivider()
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        appId.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        appId.identifier,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                if (deletingAppId == appId.id) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    TextButton(
+                                        enabled = deletingAppId == null,
+                                        onClick = {
+                                            deletingAppId = appId.id
+                                            scope.launch(Dispatchers.IO) {
+                                                try {
+                                                    state.signing.deleteRegisteredAppId(state.teamId, appId.id)
+                                                    currentIds = currentIds.filter { it.id != appId.id }
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    status = "Delete failed: ${e.message}"
+                                                }
+                                                deletingAppId = null
+                                            }
+                                        },
+                                    ) { Text("Delete") }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(
+                    enabled = deletingAppId == null,
+                    onClick = { manageAppIds = null },
+                ) { Text("Done") }
+            },
+        )
     }
 
     appIdSwap?.let { swap ->
@@ -487,21 +632,23 @@ fun DeviceDetailScreen(
                                 status = "Removing app slot..."
                                 savedSwap.signing.deleteRegisteredAppId(savedSwap.teamId, selectedId)
                                 status = "Signing ${savedSwap.fileName}..."
-                                val signedBytes = savedSwap.signing.signIpa(
-                                    savedSwap.ipaBytes,
+                                val signedPath = savedSwap.signing.signIpa(
+                                    savedSwap.ipaPath,
                                     savedSwap.teamId,
                                     session.info().deviceUuid,
                                     device.serviceName,
                                     context.filesDir.absolutePath,
                                     context.cacheDir.absolutePath,
                                 )
+                                File(savedSwap.ipaPath).delete()
                                 status = "Uploading & installing ${savedSwap.fileName}..."
                                 val listener = object : InstallProgressListener {
                                     override suspend fun onProgress(percentComplete: UInt) {
                                         installProgress = percentComplete.toInt()
                                     }
                                 }
-                                session.installIpa(signedBytes, savedSwap.fileName, listener)
+                                // install_ipa deletes the signed file after upload
+                                session.installIpa(signedPath, savedSwap.fileName, listener)
                                 status = "Install complete"
                                 refreshAppRows(session)
                             } catch (e: CancellationException) {

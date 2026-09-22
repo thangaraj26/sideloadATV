@@ -102,9 +102,25 @@ impl SigningSession {
         adsid: String,
         xcode_gs_token: String,
     ) -> Result<Arc<Self>, SigningError> {
-        let config = plume_core::AnisetteConfiguration::new().set_configuration_path(data_dir.into());
+        let config = plume_core::AnisetteConfiguration::new()
+            .set_configuration_path(data_dir.into())
+            .set_anisette_url("https://ani.sidestore.io".to_string());
         let developer = DeveloperSession::new(adsid, xcode_gs_token, config).await?;
         Ok(Arc::new(Self { developer }))
+    }
+
+    /// Returns all App IDs registered under the given team. Use this to let the
+    /// user see and delete slots before hitting the 10/7-day limit.
+    pub async fn list_registered_app_ids(
+        &self,
+        team_id: String,
+    ) -> Result<Vec<AppIdInfo>, SigningError> {
+        let response = self.developer.qh_list_app_ids(&team_id).await?;
+        Ok(response
+            .app_ids
+            .into_iter()
+            .map(|a| AppIdInfo { id: a.app_id_id, name: a.name, identifier: a.identifier })
+            .collect())
     }
 
     /// Removes one registered App ID slot from the Apple Developer portal.
@@ -130,9 +146,14 @@ impl SigningSession {
             .collect())
     }
 
-    /// Re-signs `ipa_bytes` for the Apple TV identified by `device_udid`
-    /// (`TunnelInfo.device_uuid` from a paired `TunnelSession`) and returns the
-    /// signed IPA, ready for `TunnelSession::install_ipa`.
+    /// Signs the IPA at `ipa_path` for the Apple TV identified by `device_udid`
+    /// and returns the path to the signed IPA (inside `cache_dir`), ready for
+    /// `TunnelSession::install_ipa`. The caller is responsible for deleting the
+    /// returned file after the install completes.
+    ///
+    /// Accepts a file path rather than bytes so that large IPAs (e.g. 800 MB+
+    /// emulators) never have to be loaded into the JVM heap or passed across
+    /// the JNI boundary.
     ///
     /// `data_dir` must be a persistent, app-private directory (e.g. Android's
     /// `filesDir`) -- the signing certificate's private key is cached there,
@@ -143,13 +164,13 @@ impl SigningSession {
     /// IPA for the duration of this call.
     pub async fn sign_ipa(
         &self,
-        ipa_bytes: Vec<u8>,
+        ipa_path: String,
         team_id: String,
         device_udid: String,
         device_name: String,
         data_dir: String,
         cache_dir: String,
-    ) -> Result<Vec<u8>, SigningError> {
+    ) -> Result<String, SigningError> {
         // plume_utils' Package/archive helpers stage work under
         // std::env::temp_dir(), which reads $TMPDIR at call time and falls back
         // to "/tmp" -- a path that doesn't exist (and wouldn't be writable) in
@@ -159,10 +180,7 @@ impl SigningSession {
             std::env::set_var("TMPDIR", &cache_dir);
         }
 
-        let ipa_path =
-            PathBuf::from(&cache_dir).join(format!("sideloadatv-in-{}.ipa", uuid::Uuid::new_v4()));
-        tokio::fs::write(&ipa_path, &ipa_bytes).await?;
-
+        let ipa_path = PathBuf::from(&ipa_path);
         let package = Package::new(ipa_path.clone())?;
         let bundle = package.get_package_bundle()?;
 
@@ -195,31 +213,32 @@ impl SigningSession {
         let team_id_opt = Some(team_id.clone());
         signer.modify_bundle(&bundle, &team_id_opt).await?;
 
-        // Detect the free-account 3-App-ID limit before register_bundle fires
-        // qh_add_app_id (which returns an opaque Apple error). After modify_bundle
-        // the identifier may have been suffixed with the team ID, so we read it
-        // from the bundle rather than the raw IPA.
+        // Read the final bundle id after modify_bundle may have suffixed the team id.
         let final_bundle_id = bundle.get_bundle_identifier().unwrap_or_default();
-        let existing = self.developer.qh_list_app_ids(&team_id).await?;
-        if !existing.app_ids.iter().any(|a| a.identifier == final_bundle_id)
-            && existing.app_ids.len() >= 3
-        {
-            return Err(SigningError::AppIdLimitReached {
-                existing_app_ids: existing
-                    .app_ids
-                    .into_iter()
-                    .map(|a| AppIdInfo { id: a.app_id_id, name: a.name, identifier: a.identifier })
-                    .collect(),
-            });
-        }
 
-        signer.register_bundle(&bundle, &self.developer, &team_id, false).await?;
+        if let Err(e) = signer.register_bundle(&bundle, &self.developer, &team_id, false).await {
+            let msg = e.to_string();
+            // Error 9120 = Apple's 10-App-ID-per-7-days creation rate limit.
+            // Deleted App IDs still count — the user must wait for the window to
+            // roll over, not delete existing ones. Surface a clear message so they
+            // don't waste time trying to free active slots.
+            if msg.contains("9120") {
+                let existing = self.developer.qh_list_app_ids(&team_id).await
+                    .map(|r| r.app_ids.len())
+                    .unwrap_or(0);
+                return Err(SigningError::Message(format!(
+                    "Apple's 7-day App ID creation limit reached (10 IDs max). \
+                     Deleted App IDs still count — you need to wait up to 7 days \
+                     for the oldest ones to age out of the window. \
+                     You currently have {existing} active App ID(s). \
+                     Use 'Manage App IDs' to see them, but deleting won't unblock you until the 7 days elapse."
+                )));
+            }
+            return Err(e.into());
+        }
         signer.sign_bundle(&bundle).await?;
 
         let signed_path = package.get_archive_based_on_path(bundle.bundle_dir())?;
-        let signed_bytes = tokio::fs::read(&signed_path).await?;
-
-        let _ = tokio::fs::remove_file(&ipa_path).await;
 
         // Best-effort: remember this app + its provisioning profile expiry so
         // "refresh" (re-sign without re-picking the file) and the
@@ -234,7 +253,7 @@ impl SigningSession {
         // showing "Expiry unknown" with no Refresh button).
         if let Some(bundle_identifier) = bundle.get_bundle_identifier() {
             if let Err(e) = self
-                .remember_stored_app(&bundle, &bundle_identifier, &team_id, &device_udid, &device_name, &data_dir, &ipa_bytes)
+                .remember_stored_app(&bundle, &bundle_identifier, &team_id, &device_udid, &device_name, &data_dir, &ipa_path.to_string_lossy())
                 .await
             {
                 eprintln!("sideloadATV: failed to persist stored-app metadata for {bundle_identifier}: {e}");
@@ -243,7 +262,7 @@ impl SigningSession {
 
         package.remove_package_stage();
 
-        Ok(signed_bytes)
+        Ok(signed_path.to_string_lossy().into_owned())
     }
 }
 
@@ -257,7 +276,7 @@ impl SigningSession {
         device_udid: &str,
         device_name: &str,
         data_dir: &str,
-        original_ipa_bytes: &[u8],
+        original_ipa_path: &str,
     ) -> Result<(), SigningError> {
         let app_name = bundle.get_bundle_name().unwrap_or_else(|| bundle_identifier.to_string());
 
@@ -285,6 +304,6 @@ impl SigningSession {
             signed_at: store::unix_now(),
             expires_at,
         };
-        store::save_stored_app(data_dir, &info, original_ipa_bytes).await
+        store::save_stored_app(data_dir, &info, original_ipa_path).await
     }
 }

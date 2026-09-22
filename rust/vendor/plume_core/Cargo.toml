@@ -60,7 +60,7 @@ p12-keystore = "0.2.0" # TODO: look into p12 crate and why it doesnt support SHA
 goblin = "0.9.3"
 # Forks
 apple-codesign = { git = "https://github.com/PlumeImpactor/plume-apple-platform-rs", rev = "428b42f", package = "apple-codesign", default-features =  false }
-omnisette = { git = "https://github.com/PlumeImpactor/omnisette", rev = "c066ac2", package = "omnisette", features = ["remote-anisette-v3"] }
+omnisette = { git = "https://github.com/PlumeImpactor/omnisette", rev = "c066ac2", package = "omnisette", default-features = false, features = ["remote-anisette-v3", "remote-anisette"] }
 srp = "0.6"
 
 [features]

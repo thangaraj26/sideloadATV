@@ -823,6 +823,10 @@ internal open class UniffiVTableCallbackInterfacePinPrompter(
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -900,9 +904,11 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_sideloadatv_ffi_fn_method_signingsession_delete_registered_app_id(`ptr`: Pointer,`teamId`: RustBuffer.ByValue,`appIdId`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_sideloadatv_ffi_fn_method_signingsession_list_registered_app_ids(`ptr`: Pointer,`teamId`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_sideloadatv_ffi_fn_method_signingsession_list_teams(`ptr`: Pointer,
     ): Long
-    fun uniffi_sideloadatv_ffi_fn_method_signingsession_sign_ipa(`ptr`: Pointer,`ipaBytes`: RustBuffer.ByValue,`teamId`: RustBuffer.ByValue,`deviceUdid`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,`dataDir`: RustBuffer.ByValue,`cacheDir`: RustBuffer.ByValue,
+    fun uniffi_sideloadatv_ffi_fn_method_signingsession_sign_ipa(`ptr`: Pointer,`ipaPath`: RustBuffer.ByValue,`teamId`: RustBuffer.ByValue,`deviceUdid`: RustBuffer.ByValue,`deviceName`: RustBuffer.ByValue,`dataDir`: RustBuffer.ByValue,`cacheDir`: RustBuffer.ByValue,
     ): Long
     fun uniffi_sideloadatv_ffi_fn_clone_tunnelsession(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
@@ -910,9 +916,11 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_sideloadatv_ffi_fn_constructor_tunnelsession_connect(`host`: RustBuffer.ByValue,`port`: Short,`sendingHost`: RustBuffer.ByValue,`pairingFile`: RustBuffer.ByValue,
     ): Long
+    fun uniffi_sideloadatv_ffi_fn_method_tunnelsession_enable_jit(`ptr`: Pointer,`bundleId`: RustBuffer.ByValue,
+    ): Long
     fun uniffi_sideloadatv_ffi_fn_method_tunnelsession_info(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    fun uniffi_sideloadatv_ffi_fn_method_tunnelsession_install_ipa(`ptr`: Pointer,`ipaBytes`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`progress`: Pointer,
+    fun uniffi_sideloadatv_ffi_fn_method_tunnelsession_install_ipa(`ptr`: Pointer,`ipaPath`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`progress`: Pointer,
     ): Long
     fun uniffi_sideloadatv_ffi_fn_method_tunnelsession_list_installed_apps(`ptr`: Pointer,
     ): Long
@@ -1068,9 +1076,13 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_sideloadatv_ffi_checksum_method_signingsession_delete_registered_app_id(
     ): Short
+    fun uniffi_sideloadatv_ffi_checksum_method_signingsession_list_registered_app_ids(
+    ): Short
     fun uniffi_sideloadatv_ffi_checksum_method_signingsession_list_teams(
     ): Short
     fun uniffi_sideloadatv_ffi_checksum_method_signingsession_sign_ipa(
+    ): Short
+    fun uniffi_sideloadatv_ffi_checksum_method_tunnelsession_enable_jit(
     ): Short
     fun uniffi_sideloadatv_ffi_checksum_method_tunnelsession_info(
     ): Short
@@ -1111,7 +1123,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_sideloadatv_ffi_checksum_func_list_stored_apps() != 31074.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_sideloadatv_ffi_checksum_func_refresh_stored_app() != 1340.toShort()) {
+    if (lib.uniffi_sideloadatv_ffi_checksum_func_refresh_stored_app() != 11043.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_sideloadatv_ffi_checksum_func_remove_stored_app() != 53978.toShort()) {
@@ -1153,16 +1165,22 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_sideloadatv_ffi_checksum_method_signingsession_delete_registered_app_id() != 19264.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_sideloadatv_ffi_checksum_method_signingsession_list_registered_app_ids() != 14403.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_sideloadatv_ffi_checksum_method_signingsession_list_teams() != 10912.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_sideloadatv_ffi_checksum_method_signingsession_sign_ipa() != 9731.toShort()) {
+    if (lib.uniffi_sideloadatv_ffi_checksum_method_signingsession_sign_ipa() != 27365.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_sideloadatv_ffi_checksum_method_tunnelsession_enable_jit() != 51492.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_sideloadatv_ffi_checksum_method_tunnelsession_info() != 25329.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_sideloadatv_ffi_checksum_method_tunnelsession_install_ipa() != 6478.toShort()) {
+    if (lib.uniffi_sideloadatv_ffi_checksum_method_tunnelsession_install_ipa() != 37363.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_sideloadatv_ffi_checksum_method_tunnelsession_list_installed_apps() != 21933.toShort()) {
@@ -3075,15 +3093,26 @@ public interface SigningSessionInterface {
     suspend fun `deleteRegisteredAppId`(`teamId`: kotlin.String, `appIdId`: kotlin.String)
     
     /**
+     * Returns all App IDs registered under the given team. Use this to let the
+     * user see and delete slots before hitting the 10/7-day limit.
+     */
+    suspend fun `listRegisteredAppIds`(`teamId`: kotlin.String): List<AppIdInfo>
+    
+    /**
      * Teams this Apple ID can sign under. Only prompt the user to pick one if
      * this returns more than one entry.
      */
     suspend fun `listTeams`(): List<TeamInfo>
     
     /**
-     * Re-signs `ipa_bytes` for the Apple TV identified by `device_udid`
-     * (`TunnelInfo.device_uuid` from a paired `TunnelSession`) and returns the
-     * signed IPA, ready for `TunnelSession::install_ipa`.
+     * Signs the IPA at `ipa_path` for the Apple TV identified by `device_udid`
+     * and returns the path to the signed IPA (inside `cache_dir`), ready for
+     * `TunnelSession::install_ipa`. The caller is responsible for deleting the
+     * returned file after the install completes.
+     *
+     * Accepts a file path rather than bytes so that large IPAs (e.g. 800 MB+
+     * emulators) never have to be loaded into the JVM heap or passed across
+     * the JNI boundary.
      *
      * `data_dir` must be a persistent, app-private directory (e.g. Android's
      * `filesDir`) -- the signing certificate's private key is cached there,
@@ -3093,7 +3122,7 @@ public interface SigningSessionInterface {
      * (e.g. `cacheDir`); it only holds the extracted bundle and the re-zipped
      * IPA for the duration of this call.
      */
-    suspend fun `signIpa`(`ipaBytes`: kotlin.ByteArray, `teamId`: kotlin.String, `deviceUdid`: kotlin.String, `deviceName`: kotlin.String, `dataDir`: kotlin.String, `cacheDir`: kotlin.String): kotlin.ByteArray
+    suspend fun `signIpa`(`ipaPath`: kotlin.String, `teamId`: kotlin.String, `deviceUdid`: kotlin.String, `deviceName`: kotlin.String, `dataDir`: kotlin.String, `cacheDir`: kotlin.String): kotlin.String
     
     companion object
 }
@@ -3213,6 +3242,31 @@ open class SigningSession: Disposable, AutoCloseable, SigningSessionInterface {
 
     
     /**
+     * Returns all App IDs registered under the given team. Use this to let the
+     * user see and delete slots before hitting the 10/7-day limit.
+     */
+    @Throws(SigningException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listRegisteredAppIds`(`teamId`: kotlin.String) : List<AppIdInfo> {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_sideloadatv_ffi_fn_method_signingsession_list_registered_app_ids(
+                thisPtr,
+                FfiConverterString.lower(`teamId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeAppIdInfo.lift(it) },
+        // Error FFI converter
+        SigningException.ErrorHandler,
+    )
+    }
+
+    
+    /**
      * Teams this Apple ID can sign under. Only prompt the user to pick one if
      * this returns more than one entry.
      */
@@ -3238,9 +3292,14 @@ open class SigningSession: Disposable, AutoCloseable, SigningSessionInterface {
 
     
     /**
-     * Re-signs `ipa_bytes` for the Apple TV identified by `device_udid`
-     * (`TunnelInfo.device_uuid` from a paired `TunnelSession`) and returns the
-     * signed IPA, ready for `TunnelSession::install_ipa`.
+     * Signs the IPA at `ipa_path` for the Apple TV identified by `device_udid`
+     * and returns the path to the signed IPA (inside `cache_dir`), ready for
+     * `TunnelSession::install_ipa`. The caller is responsible for deleting the
+     * returned file after the install completes.
+     *
+     * Accepts a file path rather than bytes so that large IPAs (e.g. 800 MB+
+     * emulators) never have to be loaded into the JVM heap or passed across
+     * the JNI boundary.
      *
      * `data_dir` must be a persistent, app-private directory (e.g. Android's
      * `filesDir`) -- the signing certificate's private key is cached there,
@@ -3252,19 +3311,19 @@ open class SigningSession: Disposable, AutoCloseable, SigningSessionInterface {
      */
     @Throws(SigningException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `signIpa`(`ipaBytes`: kotlin.ByteArray, `teamId`: kotlin.String, `deviceUdid`: kotlin.String, `deviceName`: kotlin.String, `dataDir`: kotlin.String, `cacheDir`: kotlin.String) : kotlin.ByteArray {
+    override suspend fun `signIpa`(`ipaPath`: kotlin.String, `teamId`: kotlin.String, `deviceUdid`: kotlin.String, `deviceName`: kotlin.String, `dataDir`: kotlin.String, `cacheDir`: kotlin.String) : kotlin.String {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_sideloadatv_ffi_fn_method_signingsession_sign_ipa(
                 thisPtr,
-                FfiConverterByteArray.lower(`ipaBytes`),FfiConverterString.lower(`teamId`),FfiConverterString.lower(`deviceUdid`),FfiConverterString.lower(`deviceName`),FfiConverterString.lower(`dataDir`),FfiConverterString.lower(`cacheDir`),
+                FfiConverterString.lower(`ipaPath`),FfiConverterString.lower(`teamId`),FfiConverterString.lower(`deviceUdid`),FfiConverterString.lower(`deviceName`),FfiConverterString.lower(`dataDir`),FfiConverterString.lower(`cacheDir`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_poll_rust_buffer(future, callback, continuation) },
         { future, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_complete_rust_buffer(future, continuation) },
         { future -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_free_rust_buffer(future) },
         // lift function
-        { FfiConverterByteArray.lift(it) },
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         SigningException.ErrorHandler,
     )
@@ -3454,17 +3513,32 @@ public object FfiConverterTypeSigningSession: FfiConverter<SigningSession, Point
  */
 public interface TunnelSessionInterface {
     
+    /**
+     * Enables JIT compilation for a running app identified by `bundle_id`.
+     *
+     * Free-account provisioning profiles always include `get-task-allow = true`,
+     * which permits debugger attachment. This method uses that permission to
+     * briefly attach via the GDB RSP debug proxy (same technique as AltJIT /
+     * StikJIT on iOS), which causes the OS to mark the process as JIT-enabled.
+     * The app must already be running on the Apple TV when this is called.
+     */
+    suspend fun `enableJit`(`bundleId`: kotlin.String)
+    
     fun `info`(): TunnelInfo
     
     /**
-     * Uploads `ipa_bytes` to the device's `PublicStaging` directory via AFC,
-     * then asks `installation_proxy` to install it.
+     * Uploads the IPA at `ipa_path` to the device's `PublicStaging` directory
+     * via AFC, then asks `installation_proxy` to install it.
+     *
+     * Accepts a file path rather than bytes so that large IPAs never have to
+     * be passed across the JNI boundary. The file is read on the Rust side
+     * and deleted after a successful upload.
      *
      * The IPA must already be signed with a certificate + provisioning
      * profile valid for this device's UDID -- this call only performs the
      * transfer and install RPC, not signing.
      */
-    suspend fun `installIpa`(`ipaBytes`: kotlin.ByteArray, `fileName`: kotlin.String, `progress`: InstallProgressListener)
+    suspend fun `installIpa`(`ipaPath`: kotlin.String, `fileName`: kotlin.String, `progress`: InstallProgressListener)
     
     /**
      * Lists apps installed on the device via `installation_proxy` (the
@@ -3563,6 +3637,37 @@ open class TunnelSession: Disposable, AutoCloseable, TunnelSessionInterface {
         }
     }
 
+    
+    /**
+     * Enables JIT compilation for a running app identified by `bundle_id`.
+     *
+     * Free-account provisioning profiles always include `get-task-allow = true`,
+     * which permits debugger attachment. This method uses that permission to
+     * briefly attach via the GDB RSP debug proxy (same technique as AltJIT /
+     * StikJIT on iOS), which causes the OS to mark the process as JIT-enabled.
+     * The app must already be running on the Apple TV when this is called.
+     */
+    @Throws(PairingException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `enableJit`(`bundleId`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithPointer { thisPtr ->
+            UniffiLib.INSTANCE.uniffi_sideloadatv_ffi_fn_method_tunnelsession_enable_jit(
+                thisPtr,
+                FfiConverterString.lower(`bundleId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+        
+        // Error FFI converter
+        PairingException.ErrorHandler,
+    )
+    }
+
     override fun `info`(): TunnelInfo {
             return FfiConverterTypeTunnelInfo.lift(
     callWithPointer {
@@ -3577,8 +3682,12 @@ open class TunnelSession: Disposable, AutoCloseable, TunnelSessionInterface {
 
     
     /**
-     * Uploads `ipa_bytes` to the device's `PublicStaging` directory via AFC,
-     * then asks `installation_proxy` to install it.
+     * Uploads the IPA at `ipa_path` to the device's `PublicStaging` directory
+     * via AFC, then asks `installation_proxy` to install it.
+     *
+     * Accepts a file path rather than bytes so that large IPAs never have to
+     * be passed across the JNI boundary. The file is read on the Rust side
+     * and deleted after a successful upload.
      *
      * The IPA must already be signed with a certificate + provisioning
      * profile valid for this device's UDID -- this call only performs the
@@ -3586,12 +3695,12 @@ open class TunnelSession: Disposable, AutoCloseable, TunnelSessionInterface {
      */
     @Throws(PairingException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `installIpa`(`ipaBytes`: kotlin.ByteArray, `fileName`: kotlin.String, `progress`: InstallProgressListener) {
+    override suspend fun `installIpa`(`ipaPath`: kotlin.String, `fileName`: kotlin.String, `progress`: InstallProgressListener) {
         return uniffiRustCallAsync(
         callWithPointer { thisPtr ->
             UniffiLib.INSTANCE.uniffi_sideloadatv_ffi_fn_method_tunnelsession_install_ipa(
                 thisPtr,
-                FfiConverterByteArray.lower(`ipaBytes`),FfiConverterString.lower(`fileName`),FfiConverterTypeInstallProgressListener.lower(`progress`),
+                FfiConverterString.lower(`ipaPath`),FfiConverterString.lower(`fileName`),FfiConverterTypeInstallProgressListener.lower(`progress`),
             )
         },
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_poll_void(future, callback, continuation) },
@@ -4619,19 +4728,20 @@ public object FfiConverterSequenceTypeTeamInfo: FfiConverterRustBuffer<List<Team
         /**
          * Re-signs a previously-installed app from its locally-stored original IPA,
          * requesting a fresh provisioning profile (and so a fresh 7-day expiry)
-         * without the user having to re-pick the file. The result is ready for
-         * `TunnelSession::install_ipa`, same as a fresh `SigningSession::sign_ipa` call.
+         * without the user having to re-pick the file. Returns the path to the signed
+         * IPA (inside `cache_dir`), ready for `TunnelSession::install_ipa`. The
+         * caller is responsible for deleting the returned file after the install.
          */
     @Throws(SigningException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-     suspend fun `refreshStoredApp`(`signing`: SigningSession, `dataDir`: kotlin.String, `cacheDir`: kotlin.String, `bundleIdentifier`: kotlin.String) : kotlin.ByteArray {
+     suspend fun `refreshStoredApp`(`signing`: SigningSession, `dataDir`: kotlin.String, `cacheDir`: kotlin.String, `bundleIdentifier`: kotlin.String) : kotlin.String {
         return uniffiRustCallAsync(
         UniffiLib.INSTANCE.uniffi_sideloadatv_ffi_fn_func_refresh_stored_app(FfiConverterTypeSigningSession.lower(`signing`),FfiConverterString.lower(`dataDir`),FfiConverterString.lower(`cacheDir`),FfiConverterString.lower(`bundleIdentifier`),),
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_poll_rust_buffer(future, callback, continuation) },
         { future, continuation -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_complete_rust_buffer(future, continuation) },
         { future -> UniffiLib.INSTANCE.ffi_sideloadatv_ffi_rust_future_free_rust_buffer(future) },
         // lift function
-        { FfiConverterByteArray.lift(it) },
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         SigningException.ErrorHandler,
     )

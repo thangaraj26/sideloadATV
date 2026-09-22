@@ -17,18 +17,26 @@ pub trait InstallProgressListener: Send + Sync {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl TunnelSession {
-    /// Uploads `ipa_bytes` to the device's `PublicStaging` directory via AFC,
-    /// then asks `installation_proxy` to install it.
+    /// Uploads the IPA at `ipa_path` to the device's `PublicStaging` directory
+    /// via AFC, then asks `installation_proxy` to install it.
+    ///
+    /// Accepts a file path rather than bytes so that large IPAs never have to
+    /// be passed across the JNI boundary. The file is read on the Rust side
+    /// and deleted after a successful upload.
     ///
     /// The IPA must already be signed with a certificate + provisioning
     /// profile valid for this device's UDID -- this call only performs the
     /// transfer and install RPC, not signing.
     pub async fn install_ipa(
         &self,
-        ipa_bytes: Vec<u8>,
+        ipa_path: String,
         file_name: String,
         progress: std::sync::Arc<dyn InstallProgressListener>,
     ) -> Result<(), PairingError> {
+        let ipa_bytes = tokio::fs::read(&ipa_path)
+            .await
+            .map_err(|e| PairingError::Message(format!("could not read signed IPA: {e}")))?;
+
         let afc_port = self.service_port(&AfcClient::rsd_service_name())?;
         let install_port = self.service_port(&InstallationProxyClient::rsd_service_name())?;
         let remote_path = format!("PublicStaging/{file_name}");
@@ -46,6 +54,8 @@ impl TunnelSession {
         let mut fd = afc.open_owned(remote_path.clone(), AfcFopenMode::WrOnly).await?;
         fd.write_entire(&ipa_bytes).await?;
         fd.close().await?;
+        drop(ipa_bytes);
+        let _ = tokio::fs::remove_file(&ipa_path).await;
 
         let install_stream = handle.connect(install_port).await.map_err(|e| {
             PairingError::Message(format!("connect to installation_proxy through tunnel failed: {e}"))

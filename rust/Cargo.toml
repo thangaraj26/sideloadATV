@@ -9,6 +9,12 @@ members = ["ffi", "vendor/plume_core", "vendor/plume_utils", "vendor/jktcp"]
 [patch.crates-io]
 jktcp = { path = "vendor/jktcp" }
 
+# Patch the omnisette git dep (used by plume_core) with our local vendor copy.
+# The local copy removes the dead gsa.apple.com/grandslam/GsService2/lookup call
+# in remote_anisette_v3.rs and hardcodes the MID provisioning URLs directly.
+[patch."https://github.com/PlumeImpactor/omnisette"]
+omnisette = { path = "vendor/omnisette" }
+
 [profile.release]
 lto = true
 # NOT stripped: uniffi-bindgen's "library mode" needs the exported metadata
