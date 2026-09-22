@@ -216,23 +216,42 @@ impl SigningSession {
         // Read the final bundle id after modify_bundle may have suffixed the team id.
         let final_bundle_id = bundle.get_bundle_identifier().unwrap_or_default();
 
+        // Check whether Apple already has an App ID for this bundle identifier.
+        // If it does, register_bundle reuses it (no creation slot consumed).
+        // If it doesn't, a new slot is needed — and if the 7-day window is full
+        // Apple returns error 9120, which we catch below with a clear message.
+        //
+        // Use the v1 API (limit=1000) instead of QH which has no page-size param
+        // and returns a small default set — causing false "needs new slot" errors
+        // for App IDs that are actually registered but not returned by QH.
+        let already_on_portal = self.developer
+            .v1_get_app_id(&team_id, &final_bundle_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+        let portal_ids = self.developer.qh_list_app_ids(&team_id).await?;
+
         if let Err(e) = signer.register_bundle(&bundle, &self.developer, &team_id, false).await {
             let msg = e.to_string();
-            // Error 9120 = Apple's 10-App-ID-per-7-days creation rate limit.
-            // Deleted App IDs still count — the user must wait for the window to
-            // roll over, not delete existing ones. Surface a clear message so they
-            // don't waste time trying to free active slots.
             if msg.contains("9120") {
-                let existing = self.developer.qh_list_app_ids(&team_id).await
-                    .map(|r| r.app_ids.len())
-                    .unwrap_or(0);
-                return Err(SigningError::Message(format!(
-                    "Apple's 7-day App ID creation limit reached (10 IDs max). \
-                     Deleted App IDs still count — you need to wait up to 7 days \
-                     for the oldest ones to age out of the window. \
-                     You currently have {existing} active App ID(s). \
-                     Use 'Manage App IDs' to see them, but deleting won't unblock you until the 7 days elapse."
-                )));
+                let active = portal_ids.app_ids.len();
+                if already_on_portal {
+                    // App ID exists but Apple still returned 9120 — unexpected,
+                    // possibly a transient server error. Tell the user to retry.
+                    return Err(SigningError::Message(format!(
+                        "Apple returned a rate-limit error (9120) for '{final_bundle_id}' even though \
+                         the App ID already exists. This is a transient Apple server issue — please try again in a few minutes."
+                    )));
+                } else {
+                    return Err(SigningError::Message(format!(
+                        "'{final_bundle_id}' needs a new App ID slot on Apple's portal, but the \
+                         7-day creation limit (10 IDs max) is full. \
+                         You currently have {active} active App ID(s) — deleting them won't help, \
+                         the creation window must elapse. \
+                         Try again in a day or two as older slots age out, or check 'Manage App IDs' for what's registered."
+                    )));
+                }
             }
             return Err(e.into());
         }
