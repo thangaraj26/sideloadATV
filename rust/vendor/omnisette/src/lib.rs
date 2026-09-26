@@ -61,7 +61,8 @@ pub enum AnisetteError {
     Anyhow(#[from] anyhow::Error)
 }
 
-pub const DEFAULT_ANISETTE_URL: &str = "https://ani.f1sh.me/";
+// ani.f1sh.me is dead (~Sep 2026); ani.sidestore.io serves the v1 JSON API at its root.
+pub const DEFAULT_ANISETTE_URL: &str = "https://ani.sidestore.io/";
 
 pub const DEFAULT_ANISETTE_URL_V3: &str = "https://ani.sidestore.io";
 
@@ -155,14 +156,17 @@ impl AnisetteHeaders {
             return Ok(ssc_anisette_headers_provider);
         }
 
-        #[cfg(feature = "remote-anisette-v3")]
-        return Ok(AnisetteHeadersProviderRes::remote(Box::new(
-            remote_anisette_v3::RemoteAnisetteProviderV3::new(configuration.anisette_url_v3, configuration.configuration_path.clone(), configuration.macos_serial.clone()),
-        )));
-
+        // remote-anisette-v3 requires Apple's midStartProvision/midFinishProvision
+        // endpoints, which Apple removed (~Sep 2026). Skip v3 and use the v1 JSON
+        // API instead — the server returns headers in a single GET, no provisioning.
         #[cfg(feature = "remote-anisette")]
         return Ok(AnisetteHeadersProviderRes::remote(Box::new(
             remote_anisette::RemoteAnisetteProvider::new(configuration.anisette_url),
+        )));
+
+        #[cfg(all(feature = "remote-anisette-v3", not(feature = "remote-anisette")))]
+        return Ok(AnisetteHeadersProviderRes::remote(Box::new(
+            remote_anisette_v3::RemoteAnisetteProviderV3::new(configuration.anisette_url_v3, configuration.configuration_path.clone(), configuration.macos_serial.clone()),
         )));
 
         #[cfg(not(feature = "remote-anisette"))]

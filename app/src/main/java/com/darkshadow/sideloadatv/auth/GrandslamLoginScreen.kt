@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import uniffi.sideloadatv_ffi.GrandslamSession
+import uniffi.sideloadatv_ffi.GsException
 import uniffi.sideloadatv_ffi.GsLoginState
 
 private sealed class LoginStage {
@@ -91,7 +92,10 @@ fun GrandslamLoginSection(
         isBusy = true
         scope.launch(Dispatchers.IO) {
             runCatching { block() }
-                .onFailure { stage = LoginStage.Failed(it.message ?: it.toString()) }
+                .onFailure {
+                    val msg = (it as? GsException.Message)?.v1 ?: it.message ?: it.toString()
+                    stage = LoginStage.Failed(msg)
+                }
             isBusy = false
         }
     }
