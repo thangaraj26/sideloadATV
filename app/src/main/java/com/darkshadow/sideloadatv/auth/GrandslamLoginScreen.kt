@@ -20,6 +20,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import uniffi.sideloadatv_ffi.GrandslamSession
 import uniffi.sideloadatv_ffi.GsException
 import uniffi.sideloadatv_ffi.GsLoginState
@@ -54,7 +55,7 @@ fun GrandslamLoginSection(
                 val name = runCatching { session.displayName() }.getOrDefault("(name unavailable)")
                 stage = LoginStage.LoggedIn(name)
                 statusText = "Logged in"
-                onLoggedIn()
+                withContext(Dispatchers.Main) { onLoggedIn() }
             }
             is GsLoginState.NeedsDevice2fa -> {
                 statusText = "Sending 2FA push to your trusted devices..."
