@@ -113,6 +113,11 @@ private fun AppNavHost(discovery: MdnsDiscovery, modifier: Modifier = Modifier) 
                     device = device,
                     identity = identity,
                     onBack = { navController.popBackStack() },
+                    onSessionExpired = {
+                        identity = null
+                        clearStoredAccount(context)
+                        navController.popBackStack()
+                    },
                 )
             } else {
                 Text(text = "Device no longer visible -- go back and rediscover it.")

@@ -78,6 +78,20 @@ import uniffi.sideloadatv_ffi.refreshStoredApp
 
 private const val SENDING_HOST = "sideloadATV"
 
+private fun Throwable.rawMessage(): String = when (this) {
+    is SigningException.Message -> v1
+    else -> message ?: toString()
+}
+
+private fun Throwable.isSessionExpired(): Boolean {
+    val m = rawMessage()
+    return m.contains("1100") && m.contains("session", ignoreCase = true)
+}
+
+private fun Throwable.cleanMessage(): String =
+    if (isSessionExpired()) "Session expired — logging out, please sign in again"
+    else rawMessage()
+
 private fun pairingFileFor(context: Context, device: DiscoveredDevice): File {
     val safeName = device.serviceName.replace(Regex("[^A-Za-z0-9._-]"), "_")
     return File(context.filesDir, "pairing_$safeName.plist")
@@ -125,6 +139,7 @@ fun DeviceDetailScreen(
     device: DiscoveredDevice,
     identity: AppleIdentity?,
     onBack: () -> Unit,
+    onSessionExpired: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -149,7 +164,7 @@ fun DeviceDetailScreen(
 
     suspend fun refreshAppRows(session: TunnelSession) {
         val installed = runCatching { session.listInstalledApps() }.getOrElse {
-            status = "List apps failed: ${it.message}"
+            status = "List apps failed: ${it.cleanMessage()}"
             return
         }
         val stored = runCatching { listStoredApps(context.filesDir.absolutePath) }.getOrDefault(emptyList())
@@ -175,7 +190,8 @@ fun DeviceDetailScreen(
                 status = "Install complete"
                 refreshAppRows(session)
             }.onFailure { error ->
-                status = "Install failed: ${error.message}"
+                status = "Install failed: ${error.cleanMessage()}"
+                if (error.isSessionExpired()) onSessionExpired()
             }
             installProgress = null
             isBusy = false
@@ -240,12 +256,13 @@ fun DeviceDetailScreen(
                     appIdSwapSelected = e.existingAppIds.firstOrNull()?.id
                     tempInputFile = null // ownership transferred to AppIdSwapState
                 } else {
-                    status = "Install failed: ${e.message}"
+                    status = "Install failed: ${e.cleanMessage()}"
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                status = "Install failed: ${e.message}"
+                status = "Install failed: ${e.cleanMessage()}"
+                if (e.isSessionExpired()) onSessionExpired()
             } finally {
                 tempInputFile?.delete()
             }
@@ -315,7 +332,7 @@ fun DeviceDetailScreen(
                                     hasPairing = true
                                     status = "Paired" + (result.deviceName?.let { " with $it" } ?: " (existing pairing reused)")
                                 }.onFailure { error ->
-                                    status = "Pairing failed: ${error.message}"
+                                    status = "Pairing failed: ${error.cleanMessage()}"
                                 }
                                 pinRequest = null
                                 isBusy = false
@@ -360,7 +377,7 @@ fun DeviceDetailScreen(
                                         refreshAppRows(session)
                                     }.onFailure { error ->
                                         tunnelSession = null
-                                        status = "Tunnel failed: ${error.message}"
+                                        status = "Tunnel failed: ${error.cleanMessage()}"
                                     }
                                     isBusy = false
                                 }
@@ -439,7 +456,7 @@ fun DeviceDetailScreen(
                                         status = "Enabling JIT for ${row.installed.name}…"
                                         runCatching { session.enableJit(bundleId) }
                                             .onSuccess { status = "JIT enabled for ${row.installed.name}" }
-                                            .onFailure { status = "Enable JIT failed: ${it.message}" }
+                                            .onFailure { status = "Enable JIT failed: ${it.cleanMessage()}" }
                                         isBusy = false
                                     }
                                 },
@@ -479,7 +496,7 @@ fun DeviceDetailScreen(
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
-                                    status = "Failed to load App IDs: ${e.message}"
+                                    status = "Failed to load App IDs: ${e.cleanMessage()}"
                                 }
                                 isBusy = false
                             }
@@ -566,7 +583,7 @@ fun DeviceDetailScreen(
                                                 } catch (e: CancellationException) {
                                                     throw e
                                                 } catch (e: Exception) {
-                                                    status = "Delete failed: ${e.message}"
+                                                    status = "Delete failed: ${e.cleanMessage()}"
                                                 }
                                                 deletingAppId = null
                                             }
@@ -654,7 +671,7 @@ fun DeviceDetailScreen(
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
-                                status = "Install failed: ${e.message}"
+                                status = "Install failed: ${e.cleanMessage()}"
                             }
                             installProgress = null
                             isBusy = false
