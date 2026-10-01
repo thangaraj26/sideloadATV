@@ -37,6 +37,8 @@ pub enum AnisetteError {
     InvalidArgument(String),
     #[error("Anisette not provisioned!")]
     AnisetteNotProvisioned,
+    #[error("Remote anisette {stage}: {message}")]
+    RemoteProvisioning { stage: String, message: String },
     #[error("Plist serialization error {0}")]
     PlistError(#[from] plist::Error),
     #[error("Request Error {0}")]
@@ -64,7 +66,8 @@ pub enum AnisetteError {
 // ani.f1sh.me is dead (~Sep 2026); ani.sidestore.io serves the v1 JSON API at its root.
 pub const DEFAULT_ANISETTE_URL: &str = "https://ani.sidestore.io/";
 
-pub const DEFAULT_ANISETTE_URL_V3: &str = "https://ani.sidestore.io";
+// SideStore's .io server can fail with ADI unknown-session (-45025).
+pub const DEFAULT_ANISETTE_URL_V3: &str = "https://ani.sidestore.zip";
 
 #[derive(Clone, Debug)]
 pub struct AnisetteConfiguration {
@@ -156,21 +159,20 @@ impl AnisetteHeaders {
             return Ok(ssc_anisette_headers_provider);
         }
 
-        // remote-anisette-v3 requires Apple's midStartProvision/midFinishProvision
-        // endpoints, which Apple removed (~Sep 2026). Skip v3 and use the v1 JSON
-        // API instead — the server returns headers in a single GET, no provisioning.
-        #[cfg(feature = "remote-anisette")]
-        return Ok(AnisetteHeadersProviderRes::remote(Box::new(
-            remote_anisette::RemoteAnisetteProvider::new(configuration.anisette_url),
-        )));
-
-        #[cfg(all(feature = "remote-anisette-v3", not(feature = "remote-anisette")))]
+        // Prefer a persistent per-device identity. The v1 endpoint shares the
+        // server's identity with other clients and can be rejected by Apple.
+        #[cfg(feature = "remote-anisette-v3")]
         return Ok(AnisetteHeadersProviderRes::remote(Box::new(
             remote_anisette_v3::RemoteAnisetteProviderV3::new(configuration.anisette_url_v3, configuration.configuration_path.clone(), configuration.macos_serial.clone()),
         )));
 
-        #[cfg(not(feature = "remote-anisette"))]
-        bail!(AnisetteMetaError::UnsupportedDevice)
+        #[cfg(all(feature = "remote-anisette", not(feature = "remote-anisette-v3")))]
+        return Ok(AnisetteHeadersProviderRes::remote(Box::new(
+            remote_anisette::RemoteAnisetteProvider::new(configuration.anisette_url),
+        )));
+
+        #[cfg(not(any(feature = "remote-anisette", feature = "remote-anisette-v3")))]
+        Err(AnisetteError::UnsupportedDevice)
     }
 
     pub fn get_ssc_anisette_headers_provider(

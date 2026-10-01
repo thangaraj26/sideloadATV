@@ -31,6 +31,8 @@ pub enum Error {
     DeveloperSessionRequestFailed,
     #[error("Authentication SRP error {0}: {1}")]
     AuthSrpWithMessage(i64, String),
+    #[error("Apple authentication HTTP {http_code}: {message} [URL: {url}]")]
+    AuthResponse { url: String, http_code: u16, message: String },
     #[error("Authentication extra step required: {0}")]
     ExtraStep(String),
     #[error("Bad 2FA code")]

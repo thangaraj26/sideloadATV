@@ -6,12 +6,11 @@ use aes_gcm::{
 };
 use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
-use reqwest::header::{HeaderMap, HeaderValue};
 
 use crate::Error;
 use sha2::Sha256;
 
-use crate::auth::account::{check_error, parse_response};
+use crate::auth::account::{check_error, grandslam_headers, send_grandslam_request};
 use crate::auth::{
     Account, AppToken, AuthTokenRequest, AuthTokenRequestBody, GSA_ENDPOINT, RequestHeader,
 };
@@ -31,20 +30,7 @@ impl Account {
 
         let checksum = Self::create_checksum(&sk.to_vec(), dsid, app_name);
 
-        let mut gsa_headers = HeaderMap::new();
-        gsa_headers.insert(
-            "Content-Type",
-            HeaderValue::from_str("text/x-xml-plist").unwrap(),
-        );
-        gsa_headers.insert("Accept", HeaderValue::from_str("*/*").unwrap());
-        gsa_headers.insert(
-            "User-Agent",
-            HeaderValue::from_str("akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0").unwrap(),
-        );
-        gsa_headers.insert(
-            "X-MMe-Client-Info",
-            HeaderValue::from_str(&valid_anisette.get_header("x-mme-client-info")?).unwrap(),
-        );
+        let gsa_headers = grandslam_headers(&valid_anisette)?;
 
         let header = RequestHeader {
             version: "1.0.1".to_string(),
@@ -66,16 +52,9 @@ impl Account {
 
         let mut buffer = Vec::new();
         plist::to_writer_xml(&mut buffer, &packet)?;
-        let buffer = String::from_utf8(buffer).unwrap();
-
-        let res = self
-            .client
-            .post(GSA_ENDPOINT)
-            .headers(gsa_headers.clone())
-            .body(buffer)
-            .send()
-            .await;
-        let res = parse_response(res).await?;
+        let res =
+            send_grandslam_request(&self.client, GSA_ENDPOINT, gsa_headers, buffer, "App token")
+                .await?;
         let err_check = check_error(&res);
         if err_check.is_err() {
             return Err(err_check.err().unwrap());

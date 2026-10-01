@@ -101,7 +101,7 @@ impl AnisetteData {
         let headers = self
             .generate_headers(true, true, true)
             .iter()
-            .map(|(k, v)| (k.to_lowercase(), v.to_lowercase()))
+            .map(|(k, v)| (k.to_lowercase(), v.clone()))
             .collect::<HashMap<String, String>>();
 
         match headers.get(&header.to_lowercase()) {

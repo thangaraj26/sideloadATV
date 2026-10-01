@@ -49,7 +49,10 @@ impl DeveloperSession {
         let app_group = response_data
             .application_group_list
             .into_iter()
-            .find(|group| group.identifier == *app_group_identifier);
+            // Apple can return an existing group with different capitalization.
+            // Treat it as the same identifier so we reuse it instead of trying
+            // to register a duplicate (which Developer Services rejects with 35).
+            .find(|group| group.identifier.eq_ignore_ascii_case(app_group_identifier));
 
         Ok(app_group)
     }

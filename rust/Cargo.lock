@@ -2875,6 +2875,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.18",
+ "tokio",
  "tokio-tungstenite",
  "uuid",
 ]
@@ -3221,6 +3222,7 @@ dependencies = [
  "goblin 0.9.3",
  "hex",
  "hmac",
+ "httpdate",
  "log",
  "num-bigint",
  "omnisette",

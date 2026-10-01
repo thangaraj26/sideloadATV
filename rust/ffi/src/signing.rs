@@ -103,8 +103,7 @@ impl SigningSession {
         xcode_gs_token: String,
     ) -> Result<Arc<Self>, SigningError> {
         let config = plume_core::AnisetteConfiguration::new()
-            .set_configuration_path(data_dir.into())
-            .set_anisette_url("https://ani.sidestore.io".to_string());
+            .set_configuration_path(data_dir.into());
         let developer = DeveloperSession::new(adsid, xcode_gs_token, config).await?;
         Ok(Arc::new(Self { developer }))
     }

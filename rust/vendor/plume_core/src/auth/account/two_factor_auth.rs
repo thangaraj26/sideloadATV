@@ -84,8 +84,6 @@ impl Account {
     }
 
     pub async fn verify_2fa(&self, code: String) -> Result<LoginState, Error> {
-        log::debug!("Verifying SMS 2FA with code: {}", code);
-
         let headers = self.build_2fa_headers(false);
         let res = self
             .client
@@ -98,7 +96,13 @@ impl Account {
             .send()
             .await?;
 
-        let res: plist::Dictionary = plist::from_bytes(res.text().await?.as_bytes())?;
+        let http_code = res.status().as_u16();
+        let url = res.url().to_string();
+        let bytes = res.bytes().await?;
+        let res: plist::Dictionary = plist::from_bytes(&bytes).map_err(|_| Error::AuthResponse {
+            url, http_code,
+            message: "2FA verification: Apple returned an unexpected response instead of an authentication plist.".into(),
+        })?;
 
         super::check_error(&res)?;
 
@@ -110,8 +114,6 @@ impl Account {
         code: String,
         mut body: VerifyBody,
     ) -> Result<LoginState, Error> {
-        log::debug!("Verifying SMS 2FA with code: {}", code);
-
         let headers = self.build_2fa_headers(true).await;
         body.security_code = Some(VerifyCode { code });
         let res = self
@@ -155,7 +157,10 @@ impl Account {
             headers.insert("Content-Type", HeaderValue::from_static("application/json"));
             headers.insert("Accept", HeaderValue::from_static("application/json"));
         }
-        headers.insert("User-Agent", HeaderValue::from_static("Xcode"));
+        headers.insert(
+            "User-Agent",
+            HeaderValue::from_static("akd/1.0 CFNetwork/808.1.4"),
+        );
         headers.insert("Accept-Language", HeaderValue::from_static("en-us"));
         headers.append(
             "X-Apple-Identity-Token",

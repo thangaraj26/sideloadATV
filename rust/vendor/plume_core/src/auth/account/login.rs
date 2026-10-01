@@ -1,15 +1,14 @@
+use num_bigint::BigUint;
 use omnisette::AnisetteConfiguration;
 use plist::{Dictionary, Value};
-use reqwest::header::{HeaderMap, HeaderValue};
 use sha2::{Digest, Sha256};
-use num_bigint::BigUint;
 use srp::client::SrpClient;
 use srp::groups::G_2048;
 use srp::utils::compute_k;
 
 use crate::Error;
 
-use crate::auth::account::{check_error, parse_response};
+use crate::auth::account::{check_error, grandslam_headers, send_grandslam_request};
 use crate::auth::anisette_data::AnisetteData;
 use crate::auth::{
     Account, ChallengeRequest, ChallengeRequestBody, GSA_ENDPOINT, InitRequest, InitRequestBody,
@@ -134,20 +133,7 @@ impl Account {
 
         let anisette = self.get_anisette().await;
 
-        let mut gsa_headers = HeaderMap::new();
-        gsa_headers.insert(
-            "Content-Type",
-            HeaderValue::from_str("text/x-xml-plist").unwrap(),
-        );
-        gsa_headers.insert("Accept", HeaderValue::from_str("*/*").unwrap());
-        gsa_headers.insert(
-            "User-Agent",
-            HeaderValue::from_str("akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0").unwrap(),
-        );
-        gsa_headers.insert(
-            "X-MMe-Client-Info",
-            HeaderValue::from_str(&anisette.get_header("x-mme-client-info")?).unwrap(),
-        );
+        let gsa_headers = grandslam_headers(&anisette)?;
 
         let header = RequestHeader {
             version: "1.0.1".to_string(),
@@ -168,15 +154,14 @@ impl Account {
         let mut buffer = Vec::new();
         plist::to_writer_xml(&mut buffer, &init_packet)?;
 
-        let res = self
-            .client
-            .post(GSA_ENDPOINT)
-            .headers(gsa_headers.clone())
-            .body(buffer)
-            .send()
-            .await;
-
-        let res = parse_response(res).await?;
+        let res = send_grandslam_request(
+            &self.client,
+            GSA_ENDPOINT,
+            gsa_headers.clone(),
+            buffer,
+            "SRP init",
+        )
+        .await?;
         check_error(&res)?;
 
         let salt = res.get("s").unwrap().as_data().unwrap();
@@ -291,15 +276,14 @@ impl Account {
         let mut buffer = Vec::new();
         plist::to_writer_xml(&mut buffer, &challenge_packet)?;
 
-        let res = self
-            .client
-            .post(GSA_ENDPOINT)
-            .headers(gsa_headers)
-            .body(buffer)
-            .send()
-            .await;
-
-        let res = parse_response(res).await?;
+        let res = send_grandslam_request(
+            &self.client,
+            GSA_ENDPOINT,
+            gsa_headers,
+            buffer,
+            "SRP complete",
+        )
+        .await?;
         check_error(&res)?;
 
         let m2 = res.get("M2").unwrap().as_data().unwrap();

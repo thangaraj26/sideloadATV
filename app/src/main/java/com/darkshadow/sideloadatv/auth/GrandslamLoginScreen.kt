@@ -129,7 +129,7 @@ fun GrandslamLoginSection(
                             handleState(session.loginEmailPass(context.filesDir.absolutePath, email, password))
                         }
                     },
-                ) { Text("Log in") }
+                ) { Text(if (isBusy) "Signing in..." else "Log in") }
             }
             is LoginStage.AwaitingDeviceCode, is LoginStage.AwaitingSmsCode -> {
                 OutlinedTextField(
@@ -155,11 +155,22 @@ fun GrandslamLoginSection(
                 ) { Text("Verify") }
             }
             is LoginStage.LoggedIn -> Text(text = "Signed in as ${current.name}")
-            is LoginStage.Failed -> Text(
-                text = "Error: ${current.message}",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            is LoginStage.Failed -> {
+                Text(
+                    text = "Error: ${current.message}",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(
+                    enabled = !isBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        code = ""
+                        statusText = ""
+                        stage = LoginStage.Form
+                    },
+                ) { Text("Try again") }
+            }
         }
 
         if (statusText.isNotBlank()) {

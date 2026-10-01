@@ -34,6 +34,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 rustls = { version = "0.23.32", features = ["ring"] }
 reqwest = { version = "0.11.14", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+httpdate = "1.0"
 regex = "1.11.2"
 base64 = "0.22"
 hex = "0.4.3"

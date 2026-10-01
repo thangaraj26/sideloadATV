@@ -283,7 +283,9 @@ impl Signer {
         // which would request an iOS profile -- failing because no iOS devices
         // are registered. Forcing Tvos always works for an ATV sideloader.
         let device_type = self.options.device_type.or_else(|| {
-            bundle.get_platform_name().map(|p| DeviceType::from_string(&p))
+            bundle
+                .get_platform_name()
+                .map(|p| DeviceType::from_string(&p))
         });
         let bundles = bundle
             .collect_bundles_sorted()?
@@ -361,7 +363,10 @@ impl Signer {
                     }
 
                     let default_group = format!("group.{}.{}", id, team_id);
-                    if !app_group_ids.contains(&default_group) {
+                    if !app_group_ids
+                        .iter()
+                        .any(|group| group.eq_ignore_ascii_case(&default_group))
+                    {
                         let default_group_id = session
                             .qh_ensure_app_group(&team_id, &default_group, &default_group)
                             .await?;
