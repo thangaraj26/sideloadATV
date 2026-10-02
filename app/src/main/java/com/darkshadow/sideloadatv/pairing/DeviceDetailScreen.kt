@@ -67,6 +67,7 @@ import uniffi.sideloadatv_ffi.AppIdInfo
 import uniffi.sideloadatv_ffi.InstallProgressListener
 import uniffi.sideloadatv_ffi.InstalledApp
 import uniffi.sideloadatv_ffi.PairingResult
+import uniffi.sideloadatv_ffi.PairingException
 import uniffi.sideloadatv_ffi.PairingSession
 import uniffi.sideloadatv_ffi.PinPrompter
 import uniffi.sideloadatv_ffi.SigningException
@@ -80,6 +81,7 @@ private const val SENDING_HOST = "sideloadATV"
 
 private fun Throwable.rawMessage(): String = when (this) {
     is SigningException.Message -> v1
+    is PairingException.Message -> v1
     else -> message ?: toString()
 }
 
@@ -162,6 +164,39 @@ fun DeviceDetailScreen(
     val canPair = !isBusy && device.manualPairing.isUsable
     val canTunnel = !isBusy && device.verified.isUsable
 
+    suspend fun openTunnel(): TunnelSession {
+        check(device.verified.isUsable) { "Waiting for the device's verified pairing service. Try again once it is available." }
+        val address = device.verified.addresses.first()
+        return TunnelSession.connect(
+            address.hostAddress ?: address.toString(),
+            device.verified.port.toUShort(),
+            SENDING_HOST,
+            pairingFile.readBytes(),
+        )
+    }
+
+    suspend fun uploadSignedIpa(signedPath: String, fileName: String): TunnelSession {
+        // Picking and signing can outlive the original tunnel. Reconnect only
+        // after signing, before sending any IPA bytes or install command.
+        status = "Connecting for upload..."
+        tunnelSession = null
+        val session = openTunnel()
+        tunnelSession = session
+        status = "Uploading & installing $fileName..."
+        val listener = object : InstallProgressListener {
+            override suspend fun onProgress(percentComplete: UInt) {
+                installProgress = percentComplete.toInt()
+            }
+        }
+        try {
+            session.installIpa(signedPath, fileName, listener)
+        } catch (e: Exception) {
+            tunnelSession = null
+            throw e
+        }
+        return session
+    }
+
     suspend fun refreshAppRows(session: TunnelSession) {
         val installed = runCatching { session.listInstalledApps() }.getOrElse {
             status = "List apps failed: ${it.cleanMessage()}"
@@ -173,22 +208,16 @@ fun DeviceDetailScreen(
         status = "${installed.size} apps installed"
     }
 
-    fun installSignedIpa(session: TunnelSession, signing: suspend () -> String, fileName: String) {
+    fun installSignedIpa(signing: suspend () -> String, fileName: String) {
         isBusy = true
         installProgress = 0
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val signedPath = signing()
-                status = "Uploading & installing $fileName..."
-                val listener = object : InstallProgressListener {
-                    override suspend fun onProgress(percentComplete: UInt) {
-                        installProgress = percentComplete.toInt()
-                    }
-                }
-                session.installIpa(signedPath, fileName, listener)
+                val uploadSession = uploadSignedIpa(signedPath, fileName)
+                refreshAppRows(uploadSession)
             }.onSuccess {
                 status = "Install complete"
-                refreshAppRows(session)
             }.onFailure { error ->
                 status = "Install failed: ${error.cleanMessage()}"
                 if (error.isSessionExpired()) onSessionExpired()
@@ -237,16 +266,10 @@ fun DeviceDetailScreen(
                     context.filesDir.absolutePath,
                     context.cacheDir.absolutePath,
                 )
-                status = "Uploading & installing $fileName..."
-                val listener = object : InstallProgressListener {
-                    override suspend fun onProgress(percentComplete: UInt) {
-                        installProgress = percentComplete.toInt()
-                    }
-                }
                 // install_ipa deletes the signed file after upload
-                session.installIpa(signedPath, fileName, listener)
+                val uploadSession = uploadSignedIpa(signedPath, fileName)
                 status = "Install complete"
-                refreshAppRows(session)
+                refreshAppRows(uploadSession)
             } catch (e: SigningException.AppIdLimitReached) {
                 val s = signingSession
                 val t = teamId
@@ -358,19 +381,12 @@ fun DeviceDetailScreen(
                             enabled = canTunnel,
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
-                                val address = device.verified.addresses.first()
-                                val port = device.verified.port
                                 isBusy = true
                                 status = "Opening tunnel..."
                                 appRows = null
                                 scope.launch(Dispatchers.IO) {
                                     runCatching {
-                                        TunnelSession.connect(
-                                            address.hostAddress ?: address.toString(),
-                                            port.toUShort(),
-                                            SENDING_HOST,
-                                            pairingFile.readBytes(),
-                                        )
+                                        openTunnel()
                                     }.onSuccess { session ->
                                         tunnelSession = session
                                         status = "Tunnel up"
@@ -427,7 +443,6 @@ fun DeviceDetailScreen(
                                     onClick = {
                                         val signInIdentity = identity
                                         installSignedIpa(
-                                            session,
                                             signing = {
                                                 val signing = signInIdentity.buildSigningSession(context.filesDir.absolutePath)
                                                 refreshStoredApp(
@@ -658,16 +673,10 @@ fun DeviceDetailScreen(
                                     context.cacheDir.absolutePath,
                                 )
                                 File(savedSwap.ipaPath).delete()
-                                status = "Uploading & installing ${savedSwap.fileName}..."
-                                val listener = object : InstallProgressListener {
-                                    override suspend fun onProgress(percentComplete: UInt) {
-                                        installProgress = percentComplete.toInt()
-                                    }
-                                }
                                 // install_ipa deletes the signed file after upload
-                                session.installIpa(signedPath, savedSwap.fileName, listener)
+                                val uploadSession = uploadSignedIpa(signedPath, savedSwap.fileName)
                                 status = "Install complete"
-                                refreshAppRows(session)
+                                refreshAppRows(uploadSession)
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {

@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
-use idevice::RsdService;
+use idevice::heartbeat::HeartbeatClient;
 use idevice::installation_proxy::InstallationProxyClient;
 use idevice::remote_pairing::{
-    RemotePairingClient, RpPairingFile, RpPairingSocket, connect_tls_psk_tunnel_native,
+    connect_tls_psk_tunnel_native, RemotePairingClient, RpPairingFile, RpPairingSocket,
 };
 use idevice::rsd::RsdHandshake;
 use idevice::tcp::adapter::Adapter;
 use idevice::tcp::handle::AdapterHandle;
+use idevice::RsdService;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
@@ -43,6 +44,26 @@ pub struct TunnelSession {
     pub(crate) handle: Mutex<AdapterHandle>,
     pub(crate) services: HashMap<String, idevice::rsd::RsdService>,
     info: TunnelInfo,
+    heartbeat: Option<tokio::task::JoinHandle<()>>,
+    // The listener belongs to this RemotePairing control connection. Dropping
+    // it after setup lets the device tear down the tunnel underneath us.
+    _control: Mutex<RemotePairingClient<RpPairingSocket<TcpStream>>>,
+}
+
+impl Drop for TunnelSession {
+    fn drop(&mut self) {
+        if let Some(heartbeat) = &self.heartbeat {
+            heartbeat.abort();
+        }
+    }
+}
+
+async fn maintain_heartbeat(mut client: HeartbeatClient) -> Result<(), idevice::IdeviceError> {
+    let mut interval = 15;
+    loop {
+        interval = client.get_marco(interval).await?.saturating_add(5);
+        client.send_polo().await?;
+    }
 }
 
 impl TunnelSession {
@@ -90,7 +111,9 @@ impl TunnelSession {
         let tunnel_stream = TcpStream::connect((host.as_str(), listener_port))
             .await
             .map_err(|e| {
-                PairingError::Message(format!("tunnel connect to {host}:{listener_port} failed: {e}"))
+                PairingError::Message(format!(
+                    "tunnel connect to {host}:{listener_port} failed: {e}"
+                ))
             })?;
         let tunnel = connect_tls_psk_tunnel_native(tunnel_stream, client.encryption_key()).await?;
 
@@ -121,11 +144,24 @@ impl TunnelSession {
         }
         let mut handle = adapter.to_async_handle();
 
-        let rsd_stream = handle
-            .connect(rsd_port)
-            .await
-            .map_err(|e| PairingError::Message(format!("connect to RSD through tunnel failed: {e}")))?;
+        let rsd_stream = handle.connect(rsd_port).await.map_err(|e| {
+            PairingError::Message(format!("connect to RSD through tunnel failed: {e}"))
+        })?;
         let handshake = RsdHandshake::new(rsd_stream).await?;
+
+        // Device services close idle connections without a Marco/Polo client.
+        // Keep it running while the user picks an IPA and while signing runs.
+        let heartbeat_client = if let Some(service) = handshake
+            .services
+            .get(HeartbeatClient::rsd_service_name().as_ref())
+        {
+            let stream = handle.connect(service.port).await.map_err(|e| {
+                PairingError::Message(format!("connect to heartbeat through tunnel failed: {e}"))
+            })?;
+            Some(HeartbeatClient::from_stream(Box::new(stream)).await?)
+        } else {
+            None
+        };
 
         // Apple's addDevice.action wants the device's hardware UDID, which the
         // RSD handshake exposes in its Properties under "UniqueDeviceID" (the
@@ -149,10 +185,21 @@ impl TunnelSession {
             device_uuid,
         };
 
+        let heartbeat = heartbeat_client.map(|client| {
+            tokio::spawn(async move {
+                // A heartbeat timeout or service EOF is local to this stream.
+                // Let the adapter's transport detect tunnel failures; closing
+                // it here also kills unrelated AFC/installation connections.
+                let _ = maintain_heartbeat(client).await;
+            })
+        });
+
         Ok(std::sync::Arc::new(Self {
             handle: Mutex::new(handle),
             services: handshake.services,
             info,
+            heartbeat,
+            _control: Mutex::new(client),
         }))
     }
 
@@ -168,7 +215,9 @@ impl TunnelSession {
 
         let mut handle = self.handle.lock().await;
         let stream = handle.connect(install_port).await.map_err(|e| {
-            PairingError::Message(format!("connect to installation_proxy through tunnel failed: {e}"))
+            PairingError::Message(format!(
+                "connect to installation_proxy through tunnel failed: {e}"
+            ))
         })?;
         let mut client = InstallationProxyClient::from_stream(Box::new(stream)).await?;
         let apps = client.get_apps(Some("User"), None).await?;
@@ -178,7 +227,10 @@ impl TunnelSession {
             .map(|(bundle_identifier, info)| {
                 let dict = info.as_dictionary();
                 let name = dict
-                    .and_then(|d| d.get("CFBundleDisplayName").or_else(|| d.get("CFBundleName")))
+                    .and_then(|d| {
+                        d.get("CFBundleDisplayName")
+                            .or_else(|| d.get("CFBundleName"))
+                    })
                     .and_then(|v| v.as_string())
                     .unwrap_or(&bundle_identifier)
                     .to_string();
@@ -189,8 +241,125 @@ impl TunnelSession {
                     })
                     .and_then(|v| v.as_string())
                     .map(|s| s.to_string());
-                InstalledApp { name, bundle_identifier, version }
+                InstalledApp {
+                    name,
+                    bundle_identifier,
+                    version,
+                }
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn pairing_control_stays_open_until_session_is_dropped() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let control = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut peer, _) = listener.accept().await.unwrap();
+        let (transport, _device) = tokio::io::duplex(4096);
+        let handle = Adapter::new(
+            Box::new(transport),
+            "fd00::1".parse().unwrap(),
+            "fd00::2".parse().unwrap(),
+        )
+        .to_async_handle();
+        let session = TunnelSession {
+            handle: Mutex::new(handle),
+            services: HashMap::new(),
+            info: TunnelInfo {
+                client_address: String::new(),
+                server_address: String::new(),
+                mtu: 16000,
+                rsd_services: Vec::new(),
+                device_uuid: String::new(),
+            },
+            heartbeat: None,
+            _control: Mutex::new(RemotePairingClient::new(
+                RpPairingSocket::new(control),
+                "test",
+            )),
+        };
+        let mut byte = [0];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), peer.read(&mut byte))
+                .await
+                .is_err()
+        );
+        drop(session);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), peer.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_adapter_keeps_transport_failure_reason() {
+        let (transport, device) = tokio::io::duplex(4096);
+        let mut handle = Adapter::new(
+            Box::new(transport),
+            "fd00::1".parse().unwrap(),
+            "fd00::2".parse().unwrap(),
+        )
+        .to_async_handle();
+        drop(device);
+        let error = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let error = handle.connect(1234).await.unwrap_err();
+                if error.to_string().contains("adapter closed") {
+                    break error;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(error.to_string().contains("transport closed"));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_replies_to_repeated_marco_and_stops_on_disconnect() {
+        let (stream, mut device) = tokio::io::duplex(4096);
+        let client = HeartbeatClient::new(idevice::Idevice::new(Box::new(stream), "test"));
+        let task = tokio::spawn(maintain_heartbeat(client));
+
+        for interval in [1, 2] {
+            let marco = format!(
+                "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Interval</key><integer>{interval}</integer></dict></plist>"
+            );
+            device
+                .write_all(&(marco.len() as u32).to_be_bytes())
+                .await
+                .unwrap();
+            device.write_all(marco.as_bytes()).await.unwrap();
+            let response = tokio::time::timeout(Duration::from_secs(2), async {
+                let length = device.read_u32().await.unwrap();
+                let mut reply = vec![0; length as usize];
+                device.read_exact(&mut reply).await.unwrap();
+                String::from_utf8(reply).unwrap()
+            })
+            .await
+            .expect("heartbeat did not respond");
+            assert!(response.contains("<key>Command</key>"));
+            assert!(response.contains("<string>Polo</string>"));
+        }
+
+        drop(device);
+        assert!(tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("heartbeat stayed alive after disconnect")
+            .unwrap()
+            .is_err());
     }
 }

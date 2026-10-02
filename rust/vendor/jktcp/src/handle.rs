@@ -29,7 +29,12 @@
 //! The task exits when the last [`AdapterHandle`] is dropped or when
 //! [`AdapterHandle::close`] is called.
 
-use std::{collections::HashMap, net::IpAddr, sync::Mutex, task::Poll};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::{Arc, Mutex},
+    task::Poll,
+};
 
 #[cfg(feature = "pcap")]
 use std::path::PathBuf;
@@ -98,6 +103,7 @@ pub struct AdapterHandle {
     sender: mpsc::UnboundedSender<HandleMessage>,
     host_ip: IpAddr,
     peer_ip: IpAddr,
+    terminal_error: Arc<Mutex<Option<(std::io::ErrorKind, String)>>>,
 }
 
 impl AdapterHandle {
@@ -105,6 +111,8 @@ impl AdapterHandle {
         let host_ip = adapter.host_ip();
         let peer_ip = adapter.peer_ip();
         let (tx, mut rx) = mpsc::unbounded_channel::<HandleMessage>();
+        let terminal_error = Arc::new(Mutex::new(None));
+        let task_error = terminal_error.clone();
         crate::spawn(async move {
             let mut handles: HashMap<u16, mpsc::UnboundedSender<Result<Vec<u8>, std::io::Error>>> =
                 HashMap::new();
@@ -184,6 +192,7 @@ impl AdapterHandle {
 
                     r = adapter.process_tcp_packet() => {
                         if let Err(e) = r {
+                            *task_error.lock().unwrap() = Some((e.kind(), e.to_string()));
                             // propagate error to all streams; close them
                             for (hp, tx) in handles.drain() {
                                 let _ = tx.send(Err(e.kind().into())); // or clone/convert
@@ -255,6 +264,16 @@ impl AdapterHandle {
             sender: tx,
             host_ip,
             peer_ip,
+            terminal_error,
+        }
+    }
+
+    fn closed_error(&self, fallback: std::io::ErrorKind) -> std::io::Error {
+        match &*self.terminal_error.lock().unwrap() {
+            Some((kind, message)) => {
+                std::io::Error::new(*kind, format!("adapter closed: {message}"))
+            }
+            None => std::io::Error::new(fallback, "adapter closed"),
         }
     }
 
@@ -305,10 +324,7 @@ impl AdapterHandle {
             })
             .is_err()
         {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NetworkUnreachable,
-                "adapter closed",
-            ));
+            return Err(self.closed_error(std::io::ErrorKind::NetworkUnreachable));
         }
 
         match timeout(std::time::Duration::from_secs(8), res_rx).await {
@@ -322,10 +338,7 @@ impl AdapterHandle {
                     pending_writes: FuturesUnordered::new(),
                 })
             }
-            Ok(Err(_)) => Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "adapter closed",
-            )),
+            Ok(Err(_)) => Err(self.closed_error(std::io::ErrorKind::BrokenPipe)),
             Err(_) => Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "channel recv timeout",
